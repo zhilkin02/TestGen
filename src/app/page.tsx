@@ -1,47 +1,174 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import AppHeader from '@/components/app/AppHeader';
 import FileUploadForm from '@/components/app/FileUploadForm';
-import FileInfoDisplay from '@/components/app/FileInfoDisplay'; // New component
-import type { UploadedFileInfo } from '@/types';
+import FileInfoDisplay from '@/components/app/FileInfoDisplay';
+import AnalysisResults from '@/components/app/AnalysisResults';
+import QuestionGenerationForm from '@/components/app/QuestionGenerationForm';
+import QuestionEditor from '@/components/app/QuestionEditor';
+import type { UploadedFileInfo, LectureAnalysisResult, EditableQuestionItem, Question as GeneratedQuestion } from '@/types';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Terminal } from "lucide-react";
+import { Terminal, LoaderCircle } from "lucide-react";
+import { handleAnalyzeContent, type AnalyzeLectureContentInput } from '@/lib/actions';
+import { handleGenerateQuestions } from '@/lib/actions';
+import { v4 as uuidv4 } from 'uuid';
+import { useToast } from "@/hooks/use-toast";
+
 
 export default function Home() {
   const [processedFileInfo, setProcessedFileInfo] = useState<UploadedFileInfo | null>(null);
   const [currentError, setCurrentError] = useState<string | null>(null);
   const [isProcessingFile, setIsProcessingFile] = useState(false);
 
-  const handleProcessingStart = () => {
+  const [analysisResult, setAnalysisResult] = useState<LectureAnalysisResult | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+
+  const [generatedQuestions, setGeneratedQuestions] = useState<EditableQuestionItem[]>([]);
+  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
+  const [questionGenerationError, setQuestionGenerationError] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  const resetAIState = useCallback(() => {
+    setAnalysisResult(null);
+    setAnalysisError(null);
+    setGeneratedQuestions([]);
+    setQuestionGenerationError(null);
+  }, []);
+
+  const handleProcessingStart = useCallback(() => {
     setIsProcessingFile(true);
     setProcessedFileInfo(null);
     setCurrentError(null);
-  };
+    resetAIState();
+  }, [resetAIState]);
 
-  const handleFileProcessed = (info: UploadedFileInfo) => {
+  const handleFileProcessed = useCallback((info: UploadedFileInfo) => {
     setIsProcessingFile(false);
     if (info.error) {
       setCurrentError(info.error);
-      setProcessedFileInfo(null); // Clear info if there was an error during processing handled by FileUploadForm
+      setProcessedFileInfo(null); // Clear info if there was an error
+      resetAIState(); // Also reset AI state
     } else {
       setProcessedFileInfo(info);
       setCurrentError(null);
     }
-  };
+  }, [resetAIState]);
   
-  const handleProcessingError = (error: string) => {
+  const handleProcessingError = useCallback((error: string) => {
     setIsProcessingFile(false);
     setCurrentError(error);
     setProcessedFileInfo(null);
-  };
+    resetAIState();
+  }, [resetAIState]);
+
+  useEffect(() => {
+    if (processedFileInfo && !processedFileInfo.error) {
+      const analyze = async () => {
+        setIsAnalyzing(true);
+        setAnalysisError(null);
+        setAnalysisResult(null);
+        setGeneratedQuestions([]); // Clear old questions
+        setQuestionGenerationError(null);
+
+        let analysisInput: AnalyzeLectureContentInput;
+
+        if (processedFileInfo.textContent) {
+          analysisInput = {
+            contentType: 'text',
+            rawTextContent: processedFileInfo.textContent,
+          };
+        } else if (processedFileInfo.dataUri && processedFileInfo.fileType.startsWith('image/')) {
+          analysisInput = {
+            contentType: 'image',
+            contentDataUri: processedFileInfo.dataUri,
+          };
+        } else if (processedFileInfo.dataUri && processedFileInfo.fileType === 'application/pdf') {
+           analysisInput = {
+            contentType: 'pdf',
+            contentDataUri: processedFileInfo.dataUri,
+          };
+        } else {
+          setAnalysisError("Тип файла не поддерживается для AI анализа (требуется текст, изображение или PDF).");
+          setIsAnalyzing(false);
+          return;
+        }
+        
+        try {
+          const result = await handleAnalyzeContent(analysisInput);
+          if ('error' in result) {
+            setAnalysisError(result.error);
+            setAnalysisResult(null);
+            toast({ title: "Ошибка анализа", description: result.error, variant: "destructive" });
+          } else {
+            setAnalysisResult(result);
+            setAnalysisError(null);
+            toast({ title: "Анализ завершен", description: "Контент успешно проанализирован." });
+          }
+        } catch (e) {
+          const errorMsg = e instanceof Error ? e.message : "Неизвестная ошибка при анализе.";
+          setAnalysisError(`Ошибка анализа: ${errorMsg}`);
+          setAnalysisResult(null);
+          toast({ title: "Критическая ошибка анализа", description: errorMsg, variant: "destructive" });
+        } finally {
+          setIsAnalyzing(false);
+        }
+      };
+      analyze();
+    }
+  }, [processedFileInfo, toast]);
+
+  const onQuestionGenerationStartCallback = useCallback(async (numQuestions: number, difficulty: 'easy' | 'medium' | 'hard') => {
+    if (!analysisResult || !analysisResult.summary) {
+      setQuestionGenerationError("Нет данных анализа для генерации вопросов.");
+      toast({ title: "Ошибка", description: "Нет данных анализа для генерации вопросов.", variant: "destructive"});
+      return;
+    }
+
+    setIsGeneratingQuestions(true);
+    setQuestionGenerationError(null);
+    setGeneratedQuestions([]);
+
+    try {
+      const result = await handleGenerateQuestions({
+        lectureContent: analysisResult.summary,
+        numberOfQuestions: numQuestions,
+        questionDifficulty: difficulty,
+      });
+
+      if ('error'in result) {
+        setQuestionGenerationError(result.error);
+        toast({ title: "Ошибка генерации вопросов", description: result.error, variant: "destructive"});
+      } else {
+        setGeneratedQuestions(
+          result.questions.map(q => ({
+            ...q,
+            id: uuidv4(),
+            editedQuestion: q.question,
+            editedAnswer: q.answer,
+            selected: true, // Default to selected
+          }))
+        );
+        setQuestionGenerationError(null);
+        toast({ title: "Вопросы сгенерированы", description: "Тестовые вопросы успешно созданы."});
+      }
+    } catch (e) {
+      const errorMsg = e instanceof Error ? e.message : "Неизвестная ошибка при генерации вопросов.";
+      setQuestionGenerationError(`Ошибка генерации: ${errorMsg}`);
+      toast({ title: "Критическая ошибка генерации", description: errorMsg, variant: "destructive"});
+    } finally {
+      setIsGeneratingQuestions(false);
+    }
+  }, [analysisResult, toast]);
+
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-background to-secondary/30">
       <AppHeader />
       <main className="flex-grow container mx-auto px-4 py-8">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-start">
           <div className="space-y-8">
             <FileUploadForm
               onProcessingStart={handleProcessingStart}
@@ -51,32 +178,89 @@ export default function Home() {
             {currentError && !isProcessingFile && (
               <Alert variant="destructive" className="shadow-md rounded-xl">
                 <Terminal className="h-4 w-4" />
-                <AlertTitle>Ошибка!</AlertTitle>
+                <AlertTitle>Ошибка загрузки файла!</AlertTitle>
                 <AlertDescription>{currentError}</AlertDescription>
               </Alert>
             )}
             {isProcessingFile && (
                <div className="p-6 border rounded-xl bg-card shadow-lg">
-                <p className="text-center text-primary animate-pulse">Идет обработка файла...</p>
+                <p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет обработка файла...</p>
               </div>
+            )}
+
+            {isAnalyzing && (
+              <div className="p-6 border rounded-xl bg-card shadow-lg mt-8">
+                 <p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет анализ контента...</p>
+              </div>
+            )}
+            {analysisError && !isAnalyzing && (
+              <Alert variant="destructive" className="shadow-md rounded-xl mt-8">
+                <Terminal className="h-4 w-4" />
+                <AlertTitle>Ошибка анализа!</AlertTitle>
+                <AlertDescription>{analysisError}</AlertDescription>
+              </Alert>
+            )}
+            {analysisResult && !isAnalyzing && !analysisError && (
+              <>
+                <AnalysisResults results={analysisResult} />
+                 <QuestionGenerationForm
+                  analysisSummary={analysisResult.summary}
+                  onGenerationStartParams={onQuestionGenerationStartCallback} // Changed prop name for clarity
+                  isLoading={isGeneratingQuestions}
+                />
+              </>
             )}
           </div>
           
-          <div className="md:sticky md:top-8">
-            {processedFileInfo && !isProcessingFile && !currentError && (
+          <div className="md:sticky md:top-8 space-y-8">
+            {processedFileInfo && !processedFileInfo.error && !isProcessingFile && (
               <FileInfoDisplay fileInfo={processedFileInfo} />
             )}
-            {!processedFileInfo && !isProcessingFile && !currentError && (
+             {!processedFileInfo && !isProcessingFile && !currentError && !analysisResult && !isAnalyzing && !analysisError && (
                  <div className="p-6 border rounded-xl bg-card shadow-lg text-center">
-                    <p className="text-muted-foreground">Загрузите файл, чтобы увидеть информацию о нем.</p>
+                    <p className="text-muted-foreground">Загрузите файл, чтобы увидеть информацию о нем и начать анализ.</p>
                 </div>
+            )}
+            
+            {isGeneratingQuestions && (
+              <div className="p-6 border rounded-xl bg-card shadow-lg">
+                <p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет генерация вопросов...</p>
+              </div>
+            )}
+            {questionGenerationError && !isGeneratingQuestions && (
+              <Alert variant="destructive" className="shadow-md rounded-xl">
+                <Terminal className="h-4 w-4" />
+                <AlertTitle>Ошибка генерации вопросов!</AlertTitle>
+                <AlertDescription>{questionGenerationError}</AlertDescription>
+              </Alert>
+            )}
+            {(generatedQuestions.length > 0 || isGeneratingQuestions) && !questionGenerationError && (
+              <QuestionEditor initialQuestions={generatedQuestions} isLoading={isGeneratingQuestions} />
+            )}
+            {/* Placeholder when analysis is done, but no questions yet and not loading */}
+            {analysisResult && !isAnalyzing && !analysisError && generatedQuestions.length === 0 && !isGeneratingQuestions && !questionGenerationError && (
+              <div className="p-6 border rounded-xl bg-card shadow-lg text-center">
+                  <p className="text-muted-foreground">Сгенерируйте вопросы на основе результатов анализа.</p>
+              </div>
             )}
           </div>
         </div>
       </main>
       <footer className="text-center py-4 border-t text-sm text-muted-foreground">
-        © {new Date().getFullYear()} ФайлИнфо. Все права защищены.
+        © {new Date().getFullYear()} ТестГен. Все права защищены.
       </footer>
     </div>
   );
+}
+
+// Minor change to QuestionGenerationForm props to pass parameters directly
+// This requires updating QuestionGenerationForm.tsx to accept onGenerationStartParams
+// and call it with numQuestions and difficulty.
+
+declare module '@/components/app/QuestionGenerationForm' {
+  interface QuestionGenerationFormProps {
+    analysisSummary: string;
+    onGenerationStartParams: (numQuestions: number, difficulty: 'easy' | 'medium' | 'hard') => void;
+    isLoading?: boolean;
+  }
 }

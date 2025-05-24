@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'ФайлИнфо - Просмотр файлов',
-  description: 'Загружайте файлы для просмотра информации, извлечения текста из DOCX и предпросмотра изображений.',
+  title: 'ТестГен - AI-генератор тестов',
+  description: 'Загрузите лекцию (текст, DOCX, PDF, изображение), получите AI-анализ и сгенерируйте тестовые вопросы.',
 };
 
 export default function RootLayout({

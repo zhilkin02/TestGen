@@ -9,62 +9,36 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { handleGenerateQuestions } from '@/lib/actions';
-import type { GenerateTestQuestionsOutput } from '@/ai/flows/generate-test-questions';
-import type { LectureAnalysisResult } from '@/types';
 
-interface QuestionGenerationFormProps {
+// This interface needs to be defined here or imported if used across modules.
+// For now, let's assume page.tsx will handle the actual GenerateTestQuestionsOutput.
+// import type { GenerateTestQuestionsOutput } from '@/ai/flows/generate-test-questions';
+
+export interface QuestionGenerationFormProps {
   analysisSummary: string;
-  onGenerationStart: () => void;
-  onGenerationComplete: (questions: GenerateTestQuestionsOutput['questions']) => void;
-  onGenerationError: (error: string) => void;
+  onGenerationStartParams: (numQuestions: number, difficulty: 'easy' | 'medium' | 'hard') => void;
+  isLoading?: boolean; // Controlled by parent
 }
 
 export default function QuestionGenerationForm({
   analysisSummary,
-  onGenerationStart,
-  onGenerationComplete,
-  onGenerationError,
+  onGenerationStartParams,
+  isLoading = false,
 }: QuestionGenerationFormProps) {
   const [numQuestions, setNumQuestions] = useState(5);
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
-  const [isGenerating, setIsGenerating] = useState(false);
   const { toast } = useToast();
 
-  const handleSubmit = async () => {
-    if (numQuestions <= 0) {
+  const handleSubmit = () => {
+    if (numQuestions <= 0 || numQuestions > 20) { // Added max check
       toast({
         title: "Неверное количество",
-        description: "Количество вопросов должно быть больше нуля.",
+        description: "Количество вопросов должно быть от 1 до 20.",
         variant: "destructive",
       });
       return;
     }
-
-    setIsGenerating(true);
-    onGenerationStart();
-
-    const result = await handleGenerateQuestions({
-      lectureContent: analysisSummary,
-      numberOfQuestions: numQuestions,
-      questionDifficulty: difficulty,
-    });
-
-    setIsGenerating(false);
-    if ('error' in result) {
-      onGenerationError(result.error);
-      toast({
-        title: "Ошибка генерации вопросов",
-        description: result.error,
-        variant: "destructive",
-      });
-    } else {
-      onGenerationComplete(result.questions);
-      toast({
-        title: "Вопросы сгенерированы",
-        description: "Тестовые вопросы были успешно созданы.",
-      });
-    }
+    onGenerationStartParams(numQuestions, difficulty);
   };
 
   return (
@@ -75,7 +49,7 @@ export default function QuestionGenerationForm({
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="space-y-2">
-          <Label htmlFor="num-questions" className="text-base">Количество вопросов</Label>
+          <Label htmlFor="num-questions" className="text-base">Количество вопросов (1-20)</Label>
           <Input
             id="num-questions"
             type="number"
@@ -99,13 +73,17 @@ export default function QuestionGenerationForm({
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={handleSubmit} disabled={isGenerating || !analysisSummary} className="w-full text-lg py-6">
-          {isGenerating ? (
+        <Button 
+          onClick={handleSubmit} 
+          disabled={isLoading || !analysisSummary} 
+          className="w-full text-lg py-6"
+        >
+          {isLoading ? (
             <LoaderCircle className="mr-2 h-5 w-5 animate-spin" />
           ) : (
             <Wand2 className="mr-2 h-5 w-5" />
           )}
-          {isGenerating ? 'Генерируем...' : 'Сгенерировать вопросы'}
+          {isLoading ? 'Генерируем...' : 'Сгенерировать вопросы'}
         </Button>
       </CardContent>
     </Card>

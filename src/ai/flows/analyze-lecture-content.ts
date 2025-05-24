@@ -12,7 +12,8 @@ import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
 
 const AnalyzeLectureContentInputSchema = z.object({
-  contentDataUri: z.string().describe("Lecture content (text, image, or PDF) as a data URI. For images/PDFs, it must include a MIME type and use Base64 encoding. Expected format: 'data:<mimetype>;base64,<encoded_data>'. For text, use 'data:text/plain;charset=utf-8,<encoded_data>'"),
+  contentDataUri: z.string().optional().describe("Lecture content (image, or PDF) as a data URI. It must include a MIME type and use Base64 encoding. Expected format: 'data:<mimetype>;base64,<encoded_data>'."),
+  rawTextContent: z.string().optional().describe("Raw text content for text files."),
   contentType: z.enum(['text', 'image', 'pdf']).describe('The type of the lecture content (text, image, or pdf).'),
 });
 export type AnalyzeLectureContentInput = z.infer<typeof AnalyzeLectureContentInputSchema>;
@@ -37,21 +38,16 @@ const prompt = ai.definePrompt({
   Analyze the following lecture content and identify the key concepts, themes, and provide a summary.
 
   Content type: {{{contentType}}}
-  Content: {{#ifOr (ifEquals contentType "image") (ifEquals contentType "pdf")}}{{media url=contentDataUri}}{{else}}{{{contentDataUri}}}{{/ifOr}}
+  Content: {{#ifEquals contentType "text"}}{{{rawTextContent}}}{{else}}{{media url=contentDataUri}}{{/ifEquals}}
   
   Output the key concepts, themes, and summary in the specified JSON format.
-  Here are some examples of content types:
-
-  - text
+  Here are some examples of content types for media:
   - image
   - pdf`,
   templateHelpers: {
     ifEquals: (arg1: any, arg2: any, options: any) => {
       return arg1 == arg2 ? options.fn(this) : options.inverse(this);
     },
-    ifOr: (arg1: boolean, arg2: boolean, options: any) => {
-      return arg1 || arg2 ? options.fn(this) : options.inverse(this);
-    }
   },
 });
 
