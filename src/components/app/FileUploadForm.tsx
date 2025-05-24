@@ -1,3 +1,4 @@
+
 'use client';
 
 import type React from 'react';
@@ -58,96 +59,99 @@ export default function FileUploadForm({ onAnalysisStart, onAnalysisComplete, on
     setIsAnalyzing(true);
     onAnalysisStart();
 
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const contentDataUri = reader.result as string;
-      const contentType = file.type.startsWith('image/') ? 'image' : 'text';
-      
-      if (contentType === 'text' && !file.type.startsWith('text/')) {
-         toast({
-          title: "Неподдерживаемый тип файла",
-          description: "Для текстового анализа поддерживаются только файлы .txt или .md.",
+    const fileName = file.name.toLowerCase();
+    const fileType = file.type;
+
+    try {
+      // Handle text files (.txt, .md)
+      if (fileType === 'text/plain' || fileName.endsWith('.txt') || fileName.endsWith('.md')) {
+        const textContent = await file.text();
+        const dataUri = `data:text/plain;charset=utf-8,${encodeURIComponent(textContent)}`;
+        
+        const result = await handleAnalyzeContent({ contentDataUri: dataUri, contentType: 'text' });
+        
+        if ('error' in result) {
+          onAnalysisError(result.error);
+          toast({ title: "Ошибка анализа", description: result.error, variant: "destructive" });
+        } else {
+          onAnalysisComplete(result);
+          toast({ title: "Анализ завершен", description: "Ключевые понятия и темы были успешно извлечены." });
+        }
+        setIsAnalyzing(false);
+      } 
+      // Handle image files
+      else if (fileType.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const contentDataUri = reader.result as string;
+          const result = await handleAnalyzeContent({ contentDataUri, contentType: 'image' });
+
+          if ('error' in result) {
+            onAnalysisError(result.error);
+            toast({ title: "Ошибка анализа", description: result.error, variant: "destructive" });
+          } else {
+            onAnalysisComplete(result);
+            toast({ title: "Анализ завершен", description: "Ключевые понятия и темы были успешно извлечены." });
+          }
+          setIsAnalyzing(false);
+        };
+        reader.onerror = () => {
+          const errorMsg = "Не удалось прочитать файл изображения.";
+          onAnalysisError(errorMsg);
+          toast({ title: "Ошибка чтения файла", description: errorMsg, variant: "destructive" });
+          setIsAnalyzing(false);
+        };
+        reader.readAsDataURL(file);
+        // For image files, setIsAnalyzing(false) is handled in onloadend/onerror, so we return early.
+        return; 
+      }
+      // Handle DOC, DOCX, PDF (selectable but not processable by current AI flow)
+      else if (
+        fileName.endsWith('.doc') || fileName.endsWith('.docx') || 
+        fileType === 'application/msword' || 
+        fileType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        fileName.endsWith('.pdf') || fileType === 'application/pdf'
+      ) {
+        const errorMsg = "Анализ файлов DOC, DOCX и PDF пока не поддерживается. Пожалуйста, выберите текстовый файл (.txt, .md) или изображение.";
+        onAnalysisError(errorMsg);
+        toast({
+          title: "Формат файла не поддерживается для анализа",
+          description: errorMsg,
           variant: "destructive",
         });
         setIsAnalyzing(false);
-        onAnalysisError("Неподдерживаемый тип файла");
-        return;
       }
-
-
-      const result = await handleAnalyzeContent({ contentDataUri, contentType });
-
-      setIsAnalyzing(false);
-      if ('error' in result) {
-        onAnalysisError(result.error);
+      // Handle other unsupported file types
+      else {
+        const errorMsg = "Неподдерживаемый тип файла. Пожалуйста, загрузите текстовый (.txt, .md), изображение, DOC, DOCX или PDF файл.";
+        onAnalysisError(errorMsg);
         toast({
-          title: "Ошибка анализа",
-          description: result.error,
-          variant: "destructive",
-        });
-      } else {
-        onAnalysisComplete(result);
-        toast({
-          title: "Анализ завершен",
-          description: "Ключевые понятия и темы были успешно извлечены.",
-        });
-      }
-    };
-
-    reader.onerror = () => {
-      setIsAnalyzing(false);
-      const errorMsg = "Не удалось прочитать файл.";
-      onAnalysisError(errorMsg);
-      toast({
-        title: "Ошибка чтения файла",
-        description: errorMsg,
-        variant: "destructive",
-      });
-    };
-    
-    if (file.type.startsWith('text/plain') || file.name.endsWith('.md')) {
-      reader.readAsText(file); // Read as text, then convert to data URI manually if needed.
-      // The AI flow expects a data URI. We'll construct it.
-      const textContent = await file.text();
-      const dataUri = `data:text/plain;charset=utf-8,${encodeURIComponent(textContent)}`;
-      const contentType = 'text';
-      
-      const result = await handleAnalyzeContent({ contentDataUri: dataUri, contentType });
-      setIsAnalyzing(false);
-      if ('error' in result) {
-        onAnalysisError(result.error);
-        toast({
-          title: "Ошибка анализа",
-          description: result.error,
-          variant: "destructive",
-        });
-      } else {
-        onAnalysisComplete(result);
-        toast({
-          title: "Анализ завершен",
-          description: "Ключевые понятия и темы были успешно извлечены.",
-        });
-      }
-
-    } else if (file.type.startsWith('image/')) {
-      reader.readAsDataURL(file);
-    } else {
-      setIsAnalyzing(false);
-      const errorMsg = "Неподдерживаемый тип файла. Пожалуйста, загрузите текстовый файл (.txt, .md) или изображение.";
-      onAnalysisError(errorMsg);
-      toast({
           title: "Ошибка типа файла",
           description: errorMsg,
           variant: "destructive",
+        });
+        setIsAnalyzing(false);
+      }
+    } catch (error) { // Catch errors from file.text() or other unexpected issues
+      const errorMessage = error instanceof Error ? error.message : "Произошла неизвестная ошибка при обработке файла.";
+      const finalErrorMsg = `Ошибка обработки файла: ${errorMessage}`;
+      onAnalysisError(finalErrorMsg);
+      toast({
+        title: "Ошибка обработки файла",
+        description: errorMessage,
+        variant: "destructive",
       });
+      setIsAnalyzing(false);
     }
+    // No finally block for setIsAnalyzing(false) because image processing handles it asynchronously.
+    // For non-image paths, it's handled directly within their blocks.
   };
 
   return (
     <Card className="w-full shadow-lg rounded-xl">
       <CardHeader>
         <CardTitle className="text-2xl font-semibold">Загрузка файла лекции</CardTitle>
-        <CardDescription>Загрузите текстовый файл (.txt, .md) или изображение для анализа.</CardDescription>
+        <CardDescription>Загрузите файл для анализа (.txt, .md, .doc, .docx, .pdf или изображение).</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="space-y-2">
@@ -156,7 +160,7 @@ export default function FileUploadForm({ onAnalysisStart, onAnalysisComplete, on
             id="file-upload"
             type="file"
             ref={fileInputRef}
-            accept=".txt,.md,image/*"
+            accept=".txt,.md,image/*,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,application/pdf"
             onChange={handleFileChange}
             className="text-base file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
           />
@@ -180,3 +184,5 @@ export default function FileUploadForm({ onAnalysisStart, onAnalysisComplete, on
     </Card>
   );
 }
+
+    
