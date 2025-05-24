@@ -1,7 +1,7 @@
 // src/ai/flows/analyze-lecture-content.ts
 'use server';
 /**
- * @fileOverview Analyzes lecture content (text and images) to identify key concepts and themes.
+ * @fileOverview Analyzes lecture content (text, images, or PDF) to identify key concepts and themes.
  *
  * - analyzeLectureContent - A function that handles the lecture content analysis.
  * - AnalyzeLectureContentInput - The input type for the analyzeLectureContent function.
@@ -12,8 +12,8 @@ import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
 
 const AnalyzeLectureContentInputSchema = z.object({
-  contentDataUri: z.string().describe("Lecture content (text or image) as a data URI. For images, it must include a MIME type and use Base64 encoding. Expected format: 'data:<mimetype>;base64,<encoded_data>'. For text, use 'data:text/plain;charset=utf-8,<encoded_data>'"),
-  contentType: z.enum(['text', 'image']).describe('The type of the lecture content.'),
+  contentDataUri: z.string().describe("Lecture content (text, image, or PDF) as a data URI. For images/PDFs, it must include a MIME type and use Base64 encoding. Expected format: 'data:<mimetype>;base64,<encoded_data>'. For text, use 'data:text/plain;charset=utf-8,<encoded_data>'"),
+  contentType: z.enum(['text', 'image', 'pdf']).describe('The type of the lecture content (text, image, or pdf).'),
 });
 export type AnalyzeLectureContentInput = z.infer<typeof AnalyzeLectureContentInputSchema>;
 
@@ -37,17 +37,21 @@ const prompt = ai.definePrompt({
   Analyze the following lecture content and identify the key concepts, themes, and provide a summary.
 
   Content type: {{{contentType}}}
-  Content: {{#ifEquals contentType "image"}}{{media url=contentDataUri}}{{else}}{{{contentDataUri}}}{{/ifEquals}}
+  Content: {{#ifOr (ifEquals contentType "image") (ifEquals contentType "pdf")}}{{media url=contentDataUri}}{{else}}{{{contentDataUri}}}{{/ifOr}}
   
   Output the key concepts, themes, and summary in the specified JSON format.
   Here are some examples of content types:
 
   - text
-  - image`,
+  - image
+  - pdf`,
   templateHelpers: {
     ifEquals: (arg1: any, arg2: any, options: any) => {
       return arg1 == arg2 ? options.fn(this) : options.inverse(this);
     },
+    ifOr: (arg1: boolean, arg2: boolean, options: any) => {
+      return arg1 || arg2 ? options.fn(this) : options.inverse(this);
+    }
   },
 });
 
