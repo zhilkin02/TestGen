@@ -1,3 +1,4 @@
+
 import type {Metadata} from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
@@ -14,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'ТестГен - Генератор тестов',
-  description: 'Загружайте лекции, анализируйте контент и генерируйте тесты с помощью ИИ.',
+  title: 'ФайлИнфо - Просмотр файлов',
+  description: 'Загружайте файлы для просмотра информации, извлечения текста из DOCX и предпросмотра изображений.',
 };
 
 export default function RootLayout({

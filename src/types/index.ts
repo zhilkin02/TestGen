@@ -1,14 +1,9 @@
-import type { AnalyzeLectureContentOutput } from '@/ai/flows/analyze-lecture-content';
-import type { GenerateTestQuestionsOutput } from '@/ai/flows/generate-test-questions';
 
-export type LectureAnalysisResult = AnalyzeLectureContentOutput;
-
-export type GeneratedQuestionItem = GenerateTestQuestionsOutput['questions'][0] & {
-  id: string;
-  selected: boolean;
-};
-
-export type EditableQuestionItem = GeneratedQuestionItem & {
-  editedQuestion: string;
-  editedAnswer: string;
-};
+export interface UploadedFileInfo {
+  fileName: string;
+  fileType: string;
+  fileSize: number;
+  textContent?: string; // For extracted text from .txt, .md, .docx
+  dataUri?: string; // For images to display
+  error?: string; // If there was an error processing the file
+}
