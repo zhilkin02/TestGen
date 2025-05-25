@@ -2,7 +2,7 @@
 'use client';
 
 import type React from 'react';
-import { useRef, useState, type ChangeEvent, useCallback } from 'react';
+import { useRef, useState, type ChangeEvent } from 'react';
 import { UploadCloud, LoaderCircle, FileText, Image as ImageIcon, FileType, FileQuestion, List } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,20 +14,20 @@ import mammoth from 'mammoth';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface FileUploadFormProps {
-  onFileSuccessfullyProcessed: (info: UploadedFileInfo) => void;
+  onBatchProcessed: (infos: UploadedFileInfo[]) => void; // Changed from onFileSuccessfullyProcessed
   onBatchProcessingStart: () => void;
-  onFileProcessingFailure: (fileName: string, error: string) => void;
+  onFileProcessingFailure: (fileName: string, error: string) => void; // Remains for individual file errors during local processing
   onBatchProcessingComplete: () => void;
 }
 
 export default function FileUploadForm({ 
-  onFileSuccessfullyProcessed, 
+  onBatchProcessed, 
   onBatchProcessingStart,
   onFileProcessingFailure,
   onBatchProcessingComplete
 }: FileUploadFormProps) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [isProcessingBatch, setIsProcessingBatch] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false); // Renamed from isProcessingBatch for clarity
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -57,8 +57,7 @@ export default function FileUploadForm({
       
       setSelectedFiles(validFiles);
       if (validFiles.length > 0) {
-        // Signal parent to clear previous single/batch results if needed
-        // This might be better handled by onBatchProcessingStart if it also clears results
+         // Parent will be signaled by onBatchProcessingStart when submit is clicked
       }
 
     } else {
@@ -76,20 +75,24 @@ export default function FileUploadForm({
       return;
     }
 
-    setIsProcessingBatch(true);
+    setIsProcessing(true);
     onBatchProcessingStart(); 
+
+    const processedInfos: UploadedFileInfo[] = [];
+    // No need to track individual successful files for a callback here,
+    // failures are handled by onFileProcessingFailure.
 
     for (const file of selectedFiles) {
       const fileName = file.name;
       const fileType = file.type || 'application/octet-stream';
       const fileSize = file.size;
-      let processedInfo: UploadedFileInfo = { fileName, fileType, fileSize };
+      let currentFileProcessedInfo: UploadedFileInfo = { fileName, fileType, fileSize };
 
       const readFileAsDataURL = (fileToRead: File): Promise<string> => {
         return new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onloadend = () => resolve(reader.result as string);
-          reader.onerror = () => reject(new Error("Не удалось прочитать файл изображения/PDF."));
+          reader.onerror = () => reject(new Error("Не удалось прочитать файл как Data URI."));
           reader.readAsDataURL(fileToRead);
         });
       };
@@ -97,49 +100,55 @@ export default function FileUploadForm({
       try {
         if (fileType === 'text/plain' || fileName.toLowerCase().endsWith('.txt') || fileName.toLowerCase().endsWith('.md')) {
           const textContent = await file.text();
-          processedInfo = { ...processedInfo, textContent };
+          currentFileProcessedInfo = { ...currentFileProcessedInfo, textContent };
         } else if (fileName.toLowerCase().endsWith('.docx') || fileType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
           try {
             const arrayBuffer = await file.arrayBuffer();
             const { value: rawText } = await mammoth.extractRawText({ arrayBuffer });
-            processedInfo = { ...processedInfo, textContent: rawText };
+            currentFileProcessedInfo = { ...currentFileProcessedInfo, textContent: rawText };
           } catch (extractError) {
             console.error(`Error extracting text from .docx file ${fileName}:`, extractError);
             const errorMsg = "Не удалось извлечь текст из файла .docx. Возможно, файл поврежден или имеет неподдерживаемый формат.";
-            processedInfo = { ...processedInfo, error: errorMsg };
+            currentFileProcessedInfo = { ...currentFileProcessedInfo, error: errorMsg };
           }
         } else if (fileType.startsWith('image/')) {
           const dataUri = await readFileAsDataURL(file);
-          processedInfo = { ...processedInfo, dataUri };
+          currentFileProcessedInfo = { ...currentFileProcessedInfo, dataUri };
         } else if (fileName.toLowerCase().endsWith('.pdf') || fileType === 'application/pdf') {
           const dataUri = await readFileAsDataURL(file);
-          processedInfo = { ...processedInfo, dataUri };
+          currentFileProcessedInfo = { ...currentFileProcessedInfo, dataUri };
         } else if (fileName.toLowerCase().endsWith('.doc') || fileType === 'application/msword') {
           const errorMsg = "Файлы .doc (старый формат Word) не могут быть проанализированы. Пожалуйста, используйте .docx или сконвертируйте файл.";
-          processedInfo = { ...processedInfo, error: errorMsg };
+          currentFileProcessedInfo = { ...currentFileProcessedInfo, error: errorMsg };
         } else {
-          const errorMsg = `Неподдерживаемый тип файла для локальной обработки или AI-анализа: ${fileType || fileName}. Поддерживаются .txt, .md, .docx, PDF, изображения.`;
-          processedInfo = { ...processedInfo, error: errorMsg };
+          const errorMsg = `Неподдерживаемый тип файла для локальной обработки: ${fileType || fileName}. Поддерживаются .txt, .md, .docx, PDF, изображения.`;
+          currentFileProcessedInfo = { ...currentFileProcessedInfo, error: errorMsg };
         }
 
-        if (processedInfo.error) {
-          onFileProcessingFailure(fileName, processedInfo.error);
-          toast({ title: `Ошибка обработки: ${fileName}`, description: processedInfo.error, variant: processedInfo.error.includes(".doc ") ? "warning" : "destructive" });
-        } else {
-          onFileSuccessfullyProcessed(processedInfo);
+        if (currentFileProcessedInfo.error) {
+          onFileProcessingFailure(fileName, currentFileProcessedInfo.error);
+          toast({ title: `Ошибка обработки: ${fileName}`, description: currentFileProcessedInfo.error, variant: currentFileProcessedInfo.error.includes(".doc ") ? "warning" : "destructive" });
         }
+        // Add to batch regardless of local error, page.tsx will filter for AI processing
+        processedInfos.push(currentFileProcessedInfo);
 
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Произошла неизвестная ошибка при обработке файла.";
         const finalErrorMsg = `Ошибка обработки файла ${fileName}: ${errorMessage}`;
         onFileProcessingFailure(fileName, finalErrorMsg);
-        toast({ title: `Ошибка обработки: ${fileName}`, description: errorMessage, variant: "destructive" });
+        processedInfos.push({ fileName, fileType, fileSize, error: finalErrorMsg }); // Ensure errored file is in the batch info
+        toast({ title: `Критическая ошибка обработки: ${fileName}`, description: errorMessage, variant: "destructive" });
       }
     } // end of loop
 
-    setIsProcessingBatch(false);
+    if (processedInfos.length > 0) {
+      onBatchProcessed(processedInfos); // Send all results, even those with local errors
+    }
+
+    setIsProcessing(false);
     onBatchProcessingComplete();
-    // Clear selection after processing? Or let user re-submit same files?
+    
+    // Optional: Clear selection after processing
     // setSelectedFiles([]); 
     // if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -158,7 +167,7 @@ export default function FileUploadForm({
   return (
     <Card className="w-full shadow-lg rounded-xl">
       <CardHeader>
-        <CardTitle className="text-2xl font-semibold">Загрузка и анализ лекции</CardTitle>
+        <CardTitle className="text-2xl font-semibold">Загрузка и анализ лекций</CardTitle>
         <CardDescription>Загрузите один или несколько файлов (.txt, .md, .docx, .pdf, изображение) для AI-анализа и генерации тестовых вопросов.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -170,7 +179,7 @@ export default function FileUploadForm({
             ref={fileInputRef}
             accept=".txt,.md,image/*,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,application/pdf,.doc,application/msword"
             onChange={handleFileChange}
-            multiple // Enable multiple file selection
+            multiple 
             className="text-base file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
           />
         </div>
@@ -194,13 +203,13 @@ export default function FileUploadForm({
           </div>
         )}
 
-        <Button onClick={handleSubmit} disabled={selectedFiles.length === 0 || isProcessingBatch} className="w-full text-lg py-6">
-          {isProcessingBatch ? (
+        <Button onClick={handleSubmit} disabled={selectedFiles.length === 0 || isProcessing} className="w-full text-lg py-6">
+          {isProcessing ? (
             <LoaderCircle className="mr-2 h-5 w-5 animate-spin" />
           ) : (
             <UploadCloud className="mr-2 h-5 w-5" />
           )}
-          {isProcessingBatch ? (selectedFiles.length > 1 ? `Обрабатываем (${selectedFiles.length})...` : 'Обрабатываем...') : `Обработать и анализировать ${selectedFiles.length > 1 ? `(${selectedFiles.length} файла(ов))` : ''}`}
+          {isProcessing ? `Обрабатываем (${selectedFiles.length})...` : `Обработать и анализировать ${selectedFiles.length > 1 ? `(${selectedFiles.length} файла(ов))` : '(1 файл)'}`}
         </Button>
       </CardContent>
     </Card>

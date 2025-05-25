@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import AppHeader from '@/components/app/AppHeader';
 import FileUploadForm from '@/components/app/FileUploadForm';
 import FileInfoDisplay from '@/components/app/FileInfoDisplay';
@@ -17,20 +17,20 @@ import type {
   EditableFillInTheBlankQuestion,
   EditableSingleChoiceQuestion,
   EditableMultipleChoiceQuestion,
+  LectureContentItem, // For AI input
 } from '@/types';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Terminal, LoaderCircle, Info } from "lucide-react";
-import { handleAnalyzeContent, type AnalyzeLectureContentInput } from '@/lib/actions';
+import { Terminal, LoaderCircle, Info, Files } from "lucide-react";
+import { handleAnalyzeContent } from '@/lib/actions'; // AnalyzeLectureContentInput is now batch
 import { handleGenerateQuestions } from '@/lib/actions';
 import { v4 as uuidv4 } from 'uuid';
 import { useToast } from "@/hooks/use-toast";
 
 
 export default function Home() {
-  const [processedFileInfo, setProcessedFileInfo] = useState<UploadedFileInfo | null>(null); // Info for the *last* successfully processed file
-  
-  const [isProcessingBatch, setIsProcessingBatch] = useState(false); // True if FileUploadForm is processing a batch
-  const [batchProcessingErrors, setBatchProcessingErrors] = useState<{fileName: string, error: string}[]>([]);
+  const [processedFilesBatch, setProcessedFilesBatch] = useState<UploadedFileInfo[] | null>(null);
+  const [isBatchProcessingClient, setIsBatchProcessingClient] = useState(false); // True if FileUploadForm is doing local processing
+  const [localBatchProcessingErrors, setLocalBatchProcessingErrors] = useState<{fileName: string, error: string}[]>([]);
 
   const [analysisResult, setAnalysisResult] = useState<LectureAnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -41,9 +41,9 @@ export default function Home() {
   const [questionGenerationError, setQuestionGenerationError] = useState<string | null>(null);
   const { toast } = useToast();
 
-  const resetUIState = useCallback(() => {
-    setProcessedFileInfo(null);
-    setBatchProcessingErrors([]);
+  const resetUIStateForNewBatch = useCallback(() => {
+    setProcessedFilesBatch(null);
+    setLocalBatchProcessingErrors([]);
     setAnalysisResult(null);
     setAnalysisError(null);
     setEditableQuestions([]);
@@ -51,95 +51,97 @@ export default function Home() {
   }, []);
 
   const handleBatchProcessingStart = useCallback(() => {
-    setIsProcessingBatch(true);
-    resetUIState(); // Clear all previous results and errors for a new batch
-  }, [resetUIState]);
-
-  const handleFileSuccessfullyProcessed = useCallback((info: UploadedFileInfo) => {
-    // This will be called for each file in the batch.
-    // The UI will reflect the *last* processed file for analysis.
-    setProcessedFileInfo(info); 
-    // Errors for *this specific file* are handled by its `info.error` if it's a validation/local processing error.
-    // `batchProcessingErrors` handles errors from the loop in FileUploadForm.
-    // If a file is successful, it won't have an error from the loop, so no need to clear batchProcessingErrors here.
-  }, []);
+    setIsBatchProcessingClient(true);
+    resetUIStateForNewBatch(); 
+  }, [resetUIStateForNewBatch]);
   
-  const handleFileProcessingFailure = useCallback((fileName: string, error: string) => {
-    setBatchProcessingErrors(prev => [...prev, {fileName, error}]);
-    // Potentially clear processedFileInfo if the last attempt was for this failed file
-    // setProcessedFileInfo(null); // Or leave it to show the last successful one
+  const handleFileProcessingFailureInBatch = useCallback((fileName: string, error: string) => {
+    setLocalBatchProcessingErrors(prev => [...prev, {fileName, error}]);
+    // Errors for individual files are collected here.
+    // The main analysis will proceed with successfully processed files from the batch.
   }, []);
 
-  const handleBatchProcessingComplete = useCallback(() => {
-    setIsProcessingBatch(false);
-    if (batchProcessingErrors.length === 0 && !processedFileInfo) {
-       // This case can happen if all files failed or no files were processed to success
-       // or if only one file was uploaded and it failed.
+  // This is called ONCE after ALL selected files are locally processed by FileUploadForm
+  const handleBatchProcessed = useCallback(async (infos: UploadedFileInfo[]) => {
+    setProcessedFilesBatch(infos); // Store all infos, including those with local errors for display
+    
+    const filesForAnalysis: LectureContentItem[] = [];
+    let filesHadLocalErrors = false;
+
+    infos.forEach(info => {
+      if (info.error) {
+        filesHadLocalErrors = true;
+        // Error already handled by onFileProcessingFailure and toast in FileUploadForm
+        return; 
+      }
+      if (info.textContent) {
+        filesForAnalysis.push({
+          fileName: info.fileName,
+          contentType: 'text',
+          rawTextContent: info.textContent,
+        });
+      } else if (info.dataUri && info.fileType.startsWith('image/')) {
+        filesForAnalysis.push({
+          fileName: info.fileName,
+          contentType: 'image',
+          contentDataUri: info.dataUri,
+        });
+      } else if (info.dataUri && info.fileType === 'application/pdf') {
+         filesForAnalysis.push({
+          fileName: info.fileName,
+          contentType: 'pdf',
+          contentDataUri: info.dataUri,
+        });
+      }
+      // .doc files or other unsupported are already marked with an error by FileUploadForm
+    });
+
+    if (filesForAnalysis.length === 0) {
+      const errorMsg = "Нет файлов, подходящих для AI-анализа в загруженной пачке.";
+      setAnalysisError(errorMsg);
+      setIsAnalyzing(false); // Ensure loading state is off
+      if (!filesHadLocalErrors) { // Only toast if no specific file errors were already shown
+          toast({ title: "Анализ невозможен", description: errorMsg, variant: "warning" });
+      }
+      return;
     }
-  }, [batchProcessingErrors.length, processedFileInfo]);
 
-
-  useEffect(() => {
-    // This effect triggers analysis for the `processedFileInfo` (i.e., the last successfully processed file from a batch)
-    if (processedFileInfo && !processedFileInfo.error && !isProcessingBatch) { // Check !isProcessingBatch to avoid triggering during batch
-      const analyze = async () => {
-        setIsAnalyzing(true);
+    setIsAnalyzing(true);
+    setAnalysisError(null);
+    setAnalysisResult(null); 
+    setEditableQuestions([]); 
+    setQuestionGenerationError(null);
+    
+    try {
+      toast({ title: `Анализ ${filesForAnalysis.length} файла(ов)`, description: "Начало AI-анализа контента..." });
+      const result = await handleAnalyzeContent({ contents: filesForAnalysis });
+      if ('error' in result) {
+        setAnalysisError(result.error);
+        setAnalysisResult(null);
+        toast({ title: `Ошибка анализа ${filesForAnalysis.length} файла(ов)`, description: result.error, variant: "destructive" });
+      } else {
+        setAnalysisResult(result);
         setAnalysisError(null);
-        // Keep existing analysisResult if a new file from batch is being analyzed,
-        // or clear it if it's a totally new operation (handleBatchProcessingStart clears it).
-        // setAnalysisResult(null); 
-        setEditableQuestions([]); 
-        setQuestionGenerationError(null);
-
-        let analysisInput: AnalyzeLectureContentInput;
-
-        if (processedFileInfo.textContent) {
-          analysisInput = {
-            contentType: 'text',
-            rawTextContent: processedFileInfo.textContent,
-          };
-        } else if (processedFileInfo.dataUri && processedFileInfo.fileType.startsWith('image/')) {
-          analysisInput = {
-            contentType: 'image',
-            contentDataUri: processedFileInfo.dataUri,
-          };
-        } else if (processedFileInfo.dataUri && processedFileInfo.fileType === 'application/pdf') {
-           analysisInput = {
-            contentType: 'pdf',
-            contentDataUri: processedFileInfo.dataUri,
-          };
-        } else {
-          consterrMsg = `Файл ${processedFileInfo.fileName} (${processedFileInfo.fileType}) не поддерживается для AI анализа.`;
-          setAnalysisError(errMsg);
-          setIsAnalyzing(false);
-          toast({ title: "Ошибка анализа", description: errMsg, variant: "destructive" });
-          return;
-        }
-        
-        try {
-          toast({ title: `Анализ файла: ${processedFileInfo.fileName}`, description: "Начало AI-анализа контента..." });
-          const result = await handleAnalyzeContent(analysisInput);
-          if ('error' in result) {
-            setAnalysisError(result.error);
-            setAnalysisResult(null);
-            toast({ title: `Ошибка анализа: ${processedFileInfo.fileName}`, description: result.error, variant: "destructive" });
-          } else {
-            setAnalysisResult(result);
-            setAnalysisError(null);
-            toast({ title: `Анализ завершен: ${processedFileInfo.fileName}`, description: "Контент успешно проанализирован." });
-          }
-        } catch (e) {
-          const errorMsg = e instanceof Error ? e.message : "Неизвестная ошибка при анализе.";
-          setAnalysisError(`Ошибка анализа для ${processedFileInfo.fileName}: ${errorMsg}`);
-          setAnalysisResult(null);
-          toast({ title: `Критическая ошибка анализа: ${processedFileInfo.fileName}`, description: errorMsg, variant: "destructive" });
-        } finally {
-          setIsAnalyzing(false);
-        }
-      };
-      analyze();
+        toast({ title: `Анализ завершен`, description: `Контент ${filesForAnalysis.length} файла(ов) успешно проанализирован.` });
+      }
+    } catch (e) {
+      const errorMsg = e instanceof Error ? e.message : "Неизвестная ошибка при анализе.";
+      setAnalysisError(`Ошибка анализа для ${filesForAnalysis.length} файла(ов): ${errorMsg}`);
+      setAnalysisResult(null);
+      toast({ title: `Критическая ошибка анализа`, description: errorMsg, variant: "destructive" });
+    } finally {
+      setIsAnalyzing(false);
     }
-  }, [processedFileInfo, isProcessingBatch, toast]);
+
+  }, [toast]);
+
+
+  const handleBatchProcessingClientComplete = useCallback(() => {
+    setIsBatchProcessingClient(false);
+    // At this point, if processedFilesBatch is null and no local errors, it means no files were selected or all were invalid before handleSubmit.
+    // If processedFilesBatch has items, analysis will be triggered by handleBatchProcessed.
+  }, []);
+
 
   const onQuestionGenerationStartCallback = useCallback(async (numQuestions: number, difficulty: 'easy' | 'medium' | 'hard', questionType: QuestionType) => {
     if (!analysisResult || !analysisResult.summary) {
@@ -147,21 +149,21 @@ export default function Home() {
       toast({ title: "Ошибка", description: "Нет данных анализа для генерации вопросов.", variant: "destructive"});
       return;
     }
-    if (!processedFileInfo) {
-       setQuestionGenerationError("Нет информации о файле для контекста генерации.");
-      toast({ title: "Ошибка", description: "Нет информации о файле для контекста генерации.", variant: "destructive"});
+    if (!processedFilesBatch || processedFilesBatch.length === 0) {
+       setQuestionGenerationError("Нет информации о файлах для контекста генерации.");
+      toast({ title: "Ошибка", description: "Нет информации о файлах для контекста генерации.", variant: "destructive"});
       return;
     }
-
 
     setIsGeneratingQuestions(true);
     setQuestionGenerationError(null);
     setEditableQuestions([]);
 
     try {
-      toast({ title: `Генерация вопросов для: ${processedFileInfo.fileName}`, description: "Начало генерации тестовых вопросов..." });
+      const firstFileName = processedFilesBatch.find(f => !f.error)?.fileName || "пакета файлов";
+      toast({ title: `Генерация вопросов для: ${firstFileName}`, description: "Начало генерации тестовых вопросов..." });
       const result = await handleGenerateQuestions({
-        lectureContent: analysisResult.summary,
+        lectureContent: analysisResult.summary, // Combined summary
         numberOfQuestions: numQuestions,
         questionDifficulty: difficulty,
         questionType: questionType,
@@ -170,7 +172,7 @@ export default function Home() {
       if ('error'in result) {
         setQuestionGenerationError(result.error);
         setEditableQuestions([]);
-        toast({ title: `Ошибка генерации вопросов: ${processedFileInfo.fileName}`, description: result.error, variant: "destructive"});
+        toast({ title: `Ошибка генерации вопросов для: ${firstFileName}`, description: result.error, variant: "destructive"});
       } else {
         const newEditableQuestions = result.questions.map((q: GeneratedQuestion) => {
           const baseEditable = {
@@ -210,17 +212,18 @@ export default function Home() {
         
         setEditableQuestions(newEditableQuestions);
         setQuestionGenerationError(null);
-        toast({ title: `Вопросы сгенерированы: ${processedFileInfo.fileName}`, description: "Тестовые вопросы успешно созданы."});
+        toast({ title: `Вопросы сгенерированы для: ${firstFileName}`, description: "Тестовые вопросы успешно созданы."});
       }
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : "Неизвестная ошибка при генерации вопросов.";
-      setQuestionGenerationError(`Ошибка генерации для ${processedFileInfo.fileName}: ${errorMsg}`);
+      const firstFileName = processedFilesBatch.find(f => !f.error)?.fileName || "пакета файлов";
+      setQuestionGenerationError(`Ошибка генерации для ${firstFileName}: ${errorMsg}`);
       setEditableQuestions([]);
-      toast({ title: `Критическая ошибка генерации: ${processedFileInfo.fileName}`, description: errorMsg, variant: "destructive"});
+      toast({ title: `Критическая ошибка генерации для ${firstFileName}`, description: errorMsg, variant: "destructive"});
     } finally {
       setIsGeneratingQuestions(false);
     }
-  }, [analysisResult, processedFileInfo, toast]);
+  }, [analysisResult, processedFilesBatch, toast]);
 
   const handleUpdateEditableQuestion = (updatedQuestion: EditableQuestionItem) => {
     setEditableQuestions(prev => prev.map(q => q.id === updatedQuestion.id ? updatedQuestion : q));
@@ -231,6 +234,9 @@ export default function Home() {
      toast({ title: "Вопрос удален" });
   };
 
+  const getNumSuccessfullyProcessedFiles = () => {
+    return processedFilesBatch?.filter(f => !f.error).length || 0;
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-background to-secondary/30">
@@ -240,38 +246,39 @@ export default function Home() {
           <div className="space-y-8">
             <FileUploadForm
               onBatchProcessingStart={handleBatchProcessingStart}
-              onFileSuccessfullyProcessed={handleFileSuccessfullyProcessed}
-              onFileProcessingFailure={handleFileProcessingFailure}
-              onBatchProcessingComplete={handleBatchProcessingComplete}
+              onBatchProcessed={handleBatchProcessed}
+              onFileProcessingFailure={handleFileProcessingFailureInBatch}
+              onBatchProcessingComplete={handleBatchProcessingClientComplete}
             />
-            {isProcessingBatch && (
+            {isBatchProcessingClient && ( // Local file reading/parsing
                <div className="p-6 border rounded-xl bg-card shadow-lg">
-                <p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет пакетная обработка файлов...</p>
+                <p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет локальная обработка файлов...</p>
               </div>
             )}
-            {batchProcessingErrors.length > 0 && !isProcessingBatch && (
+            {localBatchProcessingErrors.length > 0 && !isBatchProcessingClient && (
               <Alert variant="destructive" className="shadow-md rounded-xl">
                 <Terminal className="h-4 w-4" />
-                <AlertTitle>Ошибки при обработке файлов в пакете!</AlertTitle>
+                <AlertTitle>Ошибки при локальной обработке некоторых файлов!</AlertTitle>
                 <AlertDescription>
                   <ul className="list-disc pl-5 space-y-1">
-                    {batchProcessingErrors.map((err, index) => (
+                    {localBatchProcessingErrors.map((err, index) => (
                       <li key={index}><strong>{err.fileName}:</strong> {err.error}</li>
                     ))}
                   </ul>
+                   <p className="mt-2">AI-анализ будет выполнен только для успешно обработанных файлов (если такие есть).</p>
                 </AlertDescription>
               </Alert>
             )}
 
-            {isAnalyzing && (
+            {isAnalyzing && ( // AI analysis in progress
               <div className="p-6 border rounded-xl bg-card shadow-lg mt-4">
-                 <p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет анализ контента {processedFileInfo ? `для ${processedFileInfo.fileName}` : ''}...</p>
+                 <p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет AI-анализ {processedFilesBatch ? `${getNumSuccessfullyProcessedFiles()} файла(ов)` : ''}...</p>
               </div>
             )}
-            {analysisError && !isAnalyzing && ( // Shows error for the last analysis attempt
+            {analysisError && !isAnalyzing && ( 
               <Alert variant="destructive" className="shadow-md rounded-xl mt-4">
                 <Terminal className="h-4 w-4" />
-                <AlertTitle>Ошибка анализа!</AlertTitle>
+                <AlertTitle>Ошибка AI-анализа!</AlertTitle>
                 <AlertDescription>{analysisError}</AlertDescription>
               </Alert>
             )}
@@ -285,26 +292,33 @@ export default function Home() {
                 />
               </>
             )}
-             {!isProcessingBatch && !processedFileInfo && batchProcessingErrors.length === 0 && !analysisResult && !isAnalyzing && !analysisError && (
+             {!isBatchProcessingClient && !processedFilesBatch && localBatchProcessingErrors.length === 0 && !analysisResult && !isAnalyzing && !analysisError && (
                  <div className="p-6 border rounded-xl bg-card shadow-lg text-center mt-8">
                     <Info className="h-6 w-6 mx-auto mb-2 text-muted-foreground"/>
                     <p className="text-muted-foreground">Загрузите файлы, чтобы начать.</p>
                 </div>
             )}
+             {/* Message if all files had local errors and no analysis was attempted */}
+             {!isBatchProcessingClient && processedFilesBatch && processedFilesBatch.length > 0 && getNumSuccessfullyProcessedFiles() === 0 && !isAnalyzing && !analysisResult && (
+                <Alert variant="warning" className="shadow-md rounded-xl mt-4">
+                    <Terminal className="h-4 w-4"/>
+                    <AlertTitle>AI-анализ не выполнен</AlertTitle>
+                    <AlertDescription>Все загруженные файлы имели ошибки при локальной обработке или не подходят для анализа.</AlertDescription>
+                </Alert>
+             )}
           </div>
           
           <div className="md:sticky md:top-8 space-y-8">
-            {/* FileInfoDisplay shows info for the LAST successfully processed file that triggered analysis */}
-            {processedFileInfo && !isProcessingBatch && (
-              <FileInfoDisplay fileInfo={processedFileInfo} />
+            {processedFilesBatch && processedFilesBatch.length > 0 && !isBatchProcessingClient && (
+              <FileInfoDisplay filesInfo={processedFilesBatch} />
             )}
             
             {isGeneratingQuestions && (
               <div className="p-6 border rounded-xl bg-card shadow-lg">
-                <p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет генерация вопросов {processedFileInfo ? `для ${processedFileInfo.fileName}` : ''}...</p>
+                <p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет генерация вопросов для {getNumSuccessfullyProcessedFiles()} файла(ов)...</p>
               </div>
             )}
-            {questionGenerationError && !isGeneratingQuestions && ( // Shows error for last question gen attempt
+            {questionGenerationError && !isGeneratingQuestions && ( 
               <Alert variant="destructive" className="shadow-md rounded-xl">
                 <Terminal className="h-4 w-4" />
                 <AlertTitle>Ошибка генерации вопросов!</AlertTitle>
@@ -319,10 +333,10 @@ export default function Home() {
                 onQuestionDelete={handleDeleteEditableQuestion}
               />
             )}
-            {/* Placeholder when analysis is done but no questions generated yet */}
             {analysisResult && !isAnalyzing && !analysisError && editableQuestions.length === 0 && !isGeneratingQuestions && !questionGenerationError && (
               <div className="p-6 border rounded-xl bg-card shadow-lg text-center">
-                  <p className="text-muted-foreground">Сгенерируйте вопросы на основе результатов анализа {processedFileInfo ? `для ${processedFileInfo.fileName}` : ''}.</p>
+                  <Files className="h-6 w-6 mx-auto mb-2 text-muted-foreground"/>
+                  <p className="text-muted-foreground">Сгенерируйте вопросы на основе объединенного анализа {getNumSuccessfullyProcessedFiles()} файла(ов).</p>
               </div>
             )}
           </div>
@@ -335,7 +349,7 @@ export default function Home() {
   );
 }
 
-// Update prop type for QuestionGenerationForm in page.tsx scope for clarity
+// Update prop type for QuestionGenerationForm
 declare module '@/components/app/QuestionGenerationForm' {
   interface QuestionGenerationFormProps {
     analysisSummary: string;
@@ -354,3 +368,9 @@ declare module '@/components/app/QuestionEditor' {
   }
 }
 
+// Update prop types for FileInfoDisplay
+declare module '@/components/app/FileInfoDisplay' {
+  interface FileInfoDisplayProps {
+    filesInfo: UploadedFileInfo[] | null;
+  }
+}
