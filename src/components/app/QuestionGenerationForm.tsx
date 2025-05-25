@@ -1,3 +1,4 @@
+
 'use client';
 
 import type React from 'react';
@@ -9,15 +10,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-
-// This interface needs to be defined here or imported if used across modules.
-// For now, let's assume page.tsx will handle the actual GenerateTestQuestionsOutput.
-// import type { GenerateTestQuestionsOutput } from '@/ai/flows/generate-test-questions';
+import type { QuestionType } from '@/types';
 
 export interface QuestionGenerationFormProps {
   analysisSummary: string;
-  onGenerationStartParams: (numQuestions: number, difficulty: 'easy' | 'medium' | 'hard') => void;
-  isLoading?: boolean; // Controlled by parent
+  onGenerationStartParams: (numQuestions: number, difficulty: 'easy' | 'medium' | 'hard', questionType: QuestionType) => void;
+  isLoading?: boolean;
 }
 
 export default function QuestionGenerationForm({
@@ -27,10 +25,11 @@ export default function QuestionGenerationForm({
 }: QuestionGenerationFormProps) {
   const [numQuestions, setNumQuestions] = useState(5);
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
+  const [questionType, setQuestionType] = useState<QuestionType>('single-choice'); // Default type
   const { toast } = useToast();
 
   const handleSubmit = () => {
-    if (numQuestions <= 0 || numQuestions > 20) { // Added max check
+    if (numQuestions <= 0 || numQuestions > 20) {
       toast({
         title: "Неверное количество",
         description: "Количество вопросов должно быть от 1 до 20.",
@@ -38,7 +37,15 @@ export default function QuestionGenerationForm({
       });
       return;
     }
-    onGenerationStartParams(numQuestions, difficulty);
+    if (!questionType) {
+      toast({
+        title: "Тип вопроса не выбран",
+        description: "Пожалуйста, выберите тип вопросов для генерации.",
+        variant: "destructive",
+      });
+      return;
+    }
+    onGenerationStartParams(numQuestions, difficulty, questionType);
   };
 
   return (
@@ -70,6 +77,19 @@ export default function QuestionGenerationForm({
               <SelectItem value="easy">Легкий</SelectItem>
               <SelectItem value="medium">Средний</SelectItem>
               <SelectItem value="hard">Сложный</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="question-type" className="text-base">Тип вопроса</Label>
+          <Select value={questionType} onValueChange={(value: QuestionType) => setQuestionType(value)}>
+            <SelectTrigger id="question-type" className="w-full text-base">
+              <SelectValue placeholder="Выберите тип вопроса" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="fill-in-the-blank">Заполнить пропуск</SelectItem>
+              <SelectItem value="single-choice">Одиночный выбор</SelectItem>
+              <SelectItem value="multiple-choice">Множественный выбор</SelectItem>
             </SelectContent>
           </Select>
         </div>

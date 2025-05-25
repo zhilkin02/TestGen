@@ -8,7 +8,17 @@ import FileInfoDisplay from '@/components/app/FileInfoDisplay';
 import AnalysisResults from '@/components/app/AnalysisResults';
 import QuestionGenerationForm from '@/components/app/QuestionGenerationForm';
 import QuestionEditor from '@/components/app/QuestionEditor';
-import type { UploadedFileInfo, LectureAnalysisResult, EditableQuestionItem, Question as GeneratedQuestion } from '@/types';
+import type { 
+  UploadedFileInfo, 
+  LectureAnalysisResult, 
+  EditableQuestionItem, 
+  GeneratedQuestion,
+  QuestionType,
+  EditableFillInTheBlankQuestion,
+  EditableSingleChoiceQuestion,
+  EditableMultipleChoiceQuestion,
+  EditableOption
+} from '@/types';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Terminal, LoaderCircle } from "lucide-react";
 import { handleAnalyzeContent, type AnalyzeLectureContentInput } from '@/lib/actions';
@@ -26,7 +36,7 @@ export default function Home() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
 
-  const [generatedQuestions, setGeneratedQuestions] = useState<EditableQuestionItem[]>([]);
+  const [editableQuestions, setEditableQuestions] = useState<EditableQuestionItem[]>([]);
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [questionGenerationError, setQuestionGenerationError] = useState<string | null>(null);
   const { toast } = useToast();
@@ -34,7 +44,7 @@ export default function Home() {
   const resetAIState = useCallback(() => {
     setAnalysisResult(null);
     setAnalysisError(null);
-    setGeneratedQuestions([]);
+    setEditableQuestions([]);
     setQuestionGenerationError(null);
   }, []);
 
@@ -49,8 +59,8 @@ export default function Home() {
     setIsProcessingFile(false);
     if (info.error) {
       setCurrentError(info.error);
-      setProcessedFileInfo(null); // Clear info if there was an error
-      resetAIState(); // Also reset AI state
+      setProcessedFileInfo(null); 
+      resetAIState(); 
     } else {
       setProcessedFileInfo(info);
       setCurrentError(null);
@@ -70,7 +80,7 @@ export default function Home() {
         setIsAnalyzing(true);
         setAnalysisError(null);
         setAnalysisResult(null);
-        setGeneratedQuestions([]); // Clear old questions
+        setEditableQuestions([]); 
         setQuestionGenerationError(null);
 
         let analysisInput: AnalyzeLectureContentInput;
@@ -120,7 +130,7 @@ export default function Home() {
     }
   }, [processedFileInfo, toast]);
 
-  const onQuestionGenerationStartCallback = useCallback(async (numQuestions: number, difficulty: 'easy' | 'medium' | 'hard') => {
+  const onQuestionGenerationStartCallback = useCallback(async (numQuestions: number, difficulty: 'easy' | 'medium' | 'hard', questionType: QuestionType) => {
     if (!analysisResult || !analysisResult.summary) {
       setQuestionGenerationError("Нет данных анализа для генерации вопросов.");
       toast({ title: "Ошибка", description: "Нет данных анализа для генерации вопросов.", variant: "destructive"});
@@ -129,39 +139,80 @@ export default function Home() {
 
     setIsGeneratingQuestions(true);
     setQuestionGenerationError(null);
-    setGeneratedQuestions([]);
+    setEditableQuestions([]);
 
     try {
       const result = await handleGenerateQuestions({
         lectureContent: analysisResult.summary,
         numberOfQuestions: numQuestions,
         questionDifficulty: difficulty,
+        questionType: questionType,
       });
 
       if ('error'in result) {
         setQuestionGenerationError(result.error);
+        setEditableQuestions([]);
         toast({ title: "Ошибка генерации вопросов", description: result.error, variant: "destructive"});
       } else {
-        setGeneratedQuestions(
-          result.questions.map(q => ({
-            ...q,
+        const newEditableQuestions = result.questions.map((q: GeneratedQuestion) => {
+          const baseEditable = {
             id: uuidv4(),
-            editedQuestion: q.question,
-            editedAnswer: q.answer,
-            selected: true, // Default to selected
-          }))
-        );
+            selected: true,
+            editedQuestionText: q.questionText,
+          };
+          switch (q.type) {
+            case 'fill-in-the-blank':
+              return {
+                ...baseEditable,
+                type: q.type,
+                originalQuestion: q,
+                editedCorrectAnswer: q.correctAnswer,
+              } as EditableFillInTheBlankQuestion;
+            case 'single-choice':
+              return {
+                ...baseEditable,
+                type: q.type,
+                originalQuestion: q,
+                editedOptions: q.options.map(opt => ({ id: uuidv4(), text: opt })),
+                editedCorrectAnswer: q.correctAnswer,
+              } as EditableSingleChoiceQuestion;
+            case 'multiple-choice':
+              return {
+                ...baseEditable,
+                type: q.type,
+                originalQuestion: q,
+                editedOptions: q.options.map(opt => ({ id: uuidv4(), text: opt })),
+                editedCorrectAnswers: q.correctAnswers,
+              } as EditableMultipleChoiceQuestion;
+            default:
+              // Should not happen if types are exhaustive
+              console.error("Unknown question type from AI:", q);
+              return null; 
+          }
+        }).filter(q => q !== null) as EditableQuestionItem[];
+        
+        setEditableQuestions(newEditableQuestions);
         setQuestionGenerationError(null);
         toast({ title: "Вопросы сгенерированы", description: "Тестовые вопросы успешно созданы."});
       }
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : "Неизвестная ошибка при генерации вопросов.";
       setQuestionGenerationError(`Ошибка генерации: ${errorMsg}`);
+      setEditableQuestions([]);
       toast({ title: "Критическая ошибка генерации", description: errorMsg, variant: "destructive"});
     } finally {
       setIsGeneratingQuestions(false);
     }
   }, [analysisResult, toast]);
+
+  const handleUpdateEditableQuestion = (updatedQuestion: EditableQuestionItem) => {
+    setEditableQuestions(prev => prev.map(q => q.id === updatedQuestion.id ? updatedQuestion : q));
+  };
+
+  const handleDeleteEditableQuestion = (questionId: string) => {
+    setEditableQuestions(prev => prev.filter(q => q.id !== questionId));
+     toast({ title: "Вопрос удален" });
+  };
 
 
   return (
@@ -205,7 +256,7 @@ export default function Home() {
                 <AnalysisResults results={analysisResult} />
                  <QuestionGenerationForm
                   analysisSummary={analysisResult.summary}
-                  onGenerationStartParams={onQuestionGenerationStartCallback} // Changed prop name for clarity
+                  onGenerationStartParams={onQuestionGenerationStartCallback}
                   isLoading={isGeneratingQuestions}
                 />
               </>
@@ -234,11 +285,15 @@ export default function Home() {
                 <AlertDescription>{questionGenerationError}</AlertDescription>
               </Alert>
             )}
-            {(generatedQuestions.length > 0 || isGeneratingQuestions) && !questionGenerationError && (
-              <QuestionEditor initialQuestions={generatedQuestions} isLoading={isGeneratingQuestions} />
+            {(editableQuestions.length > 0 || isGeneratingQuestions) && !questionGenerationError && (
+              <QuestionEditor 
+                questions={editableQuestions} 
+                isLoading={isGeneratingQuestions}
+                onQuestionUpdate={handleUpdateEditableQuestion}
+                onQuestionDelete={handleDeleteEditableQuestion}
+              />
             )}
-            {/* Placeholder when analysis is done, but no questions yet and not loading */}
-            {analysisResult && !isAnalyzing && !analysisError && generatedQuestions.length === 0 && !isGeneratingQuestions && !questionGenerationError && (
+            {analysisResult && !isAnalyzing && !analysisError && editableQuestions.length === 0 && !isGeneratingQuestions && !questionGenerationError && (
               <div className="p-6 border rounded-xl bg-card shadow-lg text-center">
                   <p className="text-muted-foreground">Сгенерируйте вопросы на основе результатов анализа.</p>
               </div>
@@ -253,14 +308,21 @@ export default function Home() {
   );
 }
 
-// Minor change to QuestionGenerationForm props to pass parameters directly
-// This requires updating QuestionGenerationForm.tsx to accept onGenerationStartParams
-// and call it with numQuestions and difficulty.
-
+// Update prop type for QuestionGenerationForm in page.tsx scope for clarity
 declare module '@/components/app/QuestionGenerationForm' {
   interface QuestionGenerationFormProps {
     analysisSummary: string;
-    onGenerationStartParams: (numQuestions: number, difficulty: 'easy' | 'medium' | 'hard') => void;
+    onGenerationStartParams: (numQuestions: number, difficulty: 'easy' | 'medium' | 'hard', questionType: QuestionType) => void;
     isLoading?: boolean;
+  }
+}
+
+// Update prop types for QuestionEditor
+declare module '@/components/app/QuestionEditor' {
+  interface QuestionEditorProps {
+    questions: EditableQuestionItem[];
+    isLoading?: boolean;
+    onQuestionUpdate: (updatedQuestion: EditableQuestionItem) => void;
+    onQuestionDelete: (questionId: string) => void;
   }
 }

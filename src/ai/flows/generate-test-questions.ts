@@ -1,8 +1,9 @@
+
 // use server'
 'use server';
 
 /**
- * @fileOverview Generates test questions based on analyzed lecture content.
+ * @fileOverview Generates test questions based on analyzed lecture content and desired question type.
  *
  * - generateTestQuestions - A function that generates test questions.
  * - GenerateTestQuestionsInput - The input type for the generateTestQuestions function.
@@ -11,6 +12,9 @@
 
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
+import type { QuestionType, GeneratedQuestion } from '@/types'; // Import QuestionType
+
+const QuestionTypeSchema = z.enum(['fill-in-the-blank', 'single-choice', 'multiple-choice']);
 
 const GenerateTestQuestionsInputSchema = z.object({
   lectureContent: z
@@ -24,18 +28,43 @@ const GenerateTestQuestionsInputSchema = z.object({
     .enum(['easy', 'medium', 'hard'])
     .default('medium')
     .describe('The difficulty level of the test questions.'),
+  questionType: QuestionTypeSchema.describe('The desired type of questions to generate.'),
 });
 export type GenerateTestQuestionsInput = z.infer<typeof GenerateTestQuestionsInputSchema>;
 
+// Schemas for different question types
+const BaseQuestionOutputSchema = z.object({
+  questionText: z.string().describe("The main text of the question. For fill-in-the-blank, use '___' as a placeholder for the blank space."),
+});
+
+const FillInTheBlankOutputSchema = BaseQuestionOutputSchema.extend({
+  type: z.literal('fill-in-the-blank'),
+  correctAnswer: z.string().describe("The word or phrase that correctly fills the blank."),
+});
+
+const SingleChoiceOutputSchema = BaseQuestionOutputSchema.extend({
+  type: z.literal('single-choice'),
+  options: z.array(z.string()).min(3).max(5).describe("An array of 3 to 5 unique answer options."),
+  correctAnswer: z.string().describe("The single correct answer, which must exactly match one of the provided options."),
+});
+
+const MultipleChoiceOutputSchema = BaseQuestionOutputSchema.extend({
+  type: z.literal('multiple-choice'),
+  options: z.array(z.string()).min(3).max(5).describe("An array of 3 to 5 unique answer options."),
+  correctAnswers: z.array(z.string()).min(1).describe("An array of one or more correct answers, each must exactly match one of the provided options."),
+});
+
+const GeneratedQuestionSchema = z.discriminatedUnion("type", [
+  FillInTheBlankOutputSchema,
+  SingleChoiceOutputSchema,
+  MultipleChoiceOutputSchema,
+]);
+
 const GenerateTestQuestionsOutputSchema = z.object({
-  questions: z.array(
-    z.object({
-      question: z.string().describe('The text of the test question.'),
-      answer: z.string().describe('The correct answer to the test question.'),
-    })
-  ).describe('An array of generated test questions and their answers.'),
+  questions: z.array(GeneratedQuestionSchema).describe('An array of generated test questions.'),
 });
 export type GenerateTestQuestionsOutput = z.infer<typeof GenerateTestQuestionsOutputSchema>;
+
 
 export async function generateTestQuestions(input: GenerateTestQuestionsInput): Promise<GenerateTestQuestionsOutput> {
   return generateTestQuestionsFlow(input);
@@ -46,24 +75,57 @@ const prompt = ai.definePrompt({
   input: {schema: GenerateTestQuestionsInputSchema},
   output: {schema: GenerateTestQuestionsOutputSchema},
   prompt: `You are an expert educator creating practice test questions for students.
+Based on the following lecture content, generate {{numberOfQuestions}} test questions of {{questionDifficulty}} difficulty.
+The questions should be of type: {{questionType}}.
+**Important**: Ensure that the questions, options, and answers are generated in the same language as the provided 'Lecture Content'.
 
-  Based on the following lecture content, generate {{numberOfQuestions}} test questions of {{questionDifficulty}} difficulty.
-  **Important**: Ensure that the questions and answers are generated in the same language as the provided 'Lecture Content'.
+Lecture Content:
+{{{lectureContent}}}
 
-  Lecture Content: {{{lectureContent}}}
+Format your response as a JSON object containing a "questions" array. Each object in the array must adhere to the schema for the specified question type.
 
-  Format your response as a JSON array of objects, where each object has a "question" and an "answer" key.
-  Example:
-  [
-    {
-      "question": "What is the capital of France?",
-      "answer": "Paris"
-    },
-    {
-      "question": "What is the value of PI?",
-      "answer": "3.14159"
-    }
-  ]
+Here are examples for each question type:
+
+1. If questionType is 'fill-in-the-blank':
+   The "questionText" should include "___" to denote the blank.
+   Example:
+   {
+     "questions": [
+       {
+         "type": "fill-in-the-blank",
+         "questionText": "The capital of France is ___, known for the Eiffel Tower.",
+         "correctAnswer": "Paris"
+       }
+     ]
+   }
+
+2. If questionType is 'single-choice':
+   Provide 3 to 5 unique options. "correctAnswer" must be one of these options.
+   Example:
+   {
+     "questions": [
+       {
+         "type": "single-choice",
+         "questionText": "What is the chemical symbol for water?",
+         "options": ["O2", "H2O", "CO2", "NaCl"],
+         "correctAnswer": "H2O"
+       }
+     ]
+   }
+
+3. If questionType is 'multiple-choice':
+   Provide 3 to 5 unique options. "correctAnswers" must be an array containing one or more of these options.
+   Example:
+   {
+     "questions": [
+       {
+         "type": "multiple-choice",
+         "questionText": "Which of the following are primary colors?",
+         "options": ["Red", "Green", "Blue", "Yellow"],
+         "correctAnswers": ["Red", "Blue", "Yellow"]
+       }
+     ]
+   }
   `,
 });
 
@@ -74,6 +136,9 @@ const generateTestQuestionsFlow = ai.defineFlow(
     outputSchema: GenerateTestQuestionsOutputSchema,
   },
   async input => {
+    // Validate that if multiple choice, number of correct answers <= number of options.
+    // This validation should ideally happen in the Zod schema if possible, or the model should be prompted carefully.
+    // For now, rely on model prompt.
     const {output} = await prompt(input);
     return output!;
   }
