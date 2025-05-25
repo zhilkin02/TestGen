@@ -35,7 +35,8 @@ const prompt = ai.definePrompt({
   output: {schema: AnalyzeLectureContentOutputSchema},
   prompt: `You are an expert in analyzing lecture content and identifying key concepts and themes.
 
-  Analyze the following lecture content and identify the key concepts, themes, and provide a summary.
+  Analyze the following lecture content. Identify the key concepts, themes, and provide a summary.
+  **Important**: Ensure that all outputs (key concepts, themes, and summary) are in the same language as the input 'Content'.
 
   Content type: {{{contentType}}}
   Content: {{#ifEquals contentType "text"}}{{{rawTextContent}}}{{else}}{{media url=contentDataUri}}{{/ifEquals}}

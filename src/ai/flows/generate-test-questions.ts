@@ -48,6 +48,7 @@ const prompt = ai.definePrompt({
   prompt: `You are an expert educator creating practice test questions for students.
 
   Based on the following lecture content, generate {{numberOfQuestions}} test questions of {{questionDifficulty}} difficulty.
+  **Important**: Ensure that the questions and answers are generated in the same language as the provided 'Lecture Content'.
 
   Lecture Content: {{{lectureContent}}}
 
