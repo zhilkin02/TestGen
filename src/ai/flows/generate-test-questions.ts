@@ -12,9 +12,9 @@
 
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
-import type { QuestionType, GeneratedQuestion } from '@/types'; // Import QuestionType
+import type { QuestionType } from '@/types'; // Import QuestionType
 
-const QuestionTypeSchema = z.enum(['fill-in-the-blank', 'single-choice', 'multiple-choice']);
+const QuestionTypeEnumSchema = z.enum(['fill-in-the-blank', 'single-choice', 'multiple-choice']);
 
 const GenerateTestQuestionsInputSchema = z.object({
   lectureContent: z
@@ -28,7 +28,7 @@ const GenerateTestQuestionsInputSchema = z.object({
     .enum(['easy', 'medium', 'hard'])
     .default('medium')
     .describe('The difficulty level of the test questions.'),
-  questionType: QuestionTypeSchema.describe('The desired type of questions to generate.'),
+  questionType: QuestionTypeEnumSchema.describe('The desired type of questions to generate.'),
 });
 export type GenerateTestQuestionsInput = z.infer<typeof GenerateTestQuestionsInputSchema>;
 
@@ -38,18 +38,18 @@ const BaseQuestionOutputSchema = z.object({
 });
 
 const FillInTheBlankOutputSchema = BaseQuestionOutputSchema.extend({
-  type: z.literal('fill-in-the-blank'),
+  type: z.enum(['fill-in-the-blank']).describe("The type of the question."),
   correctAnswer: z.string().describe("The word or phrase that correctly fills the blank."),
 });
 
 const SingleChoiceOutputSchema = BaseQuestionOutputSchema.extend({
-  type: z.literal('single-choice'),
+  type: z.enum(['single-choice']).describe("The type of the question."),
   options: z.array(z.string()).min(3).max(5).describe("An array of 3 to 5 unique answer options."),
   correctAnswer: z.string().describe("The single correct answer, which must exactly match one of the provided options."),
 });
 
 const MultipleChoiceOutputSchema = BaseQuestionOutputSchema.extend({
-  type: z.literal('multiple-choice'),
+  type: z.enum(['multiple-choice']).describe("The type of the question."),
   options: z.array(z.string()).min(3).max(5).describe("An array of 3 to 5 unique answer options."),
   correctAnswers: z.array(z.string()).min(1).describe("An array of one or more correct answers, each must exactly match one of the provided options."),
 });
@@ -88,6 +88,7 @@ Here are examples for each question type:
 
 1. If questionType is 'fill-in-the-blank':
    The "questionText" should include "___" to denote the blank.
+   The "type" field must be "fill-in-the-blank".
    Example:
    {
      "questions": [
@@ -101,6 +102,7 @@ Here are examples for each question type:
 
 2. If questionType is 'single-choice':
    Provide 3 to 5 unique options. "correctAnswer" must be one of these options.
+   The "type" field must be "single-choice".
    Example:
    {
      "questions": [
@@ -115,6 +117,7 @@ Here are examples for each question type:
 
 3. If questionType is 'multiple-choice':
    Provide 3 to 5 unique options. "correctAnswers" must be an array containing one or more of these options.
+   The "type" field must be "multiple-choice".
    Example:
    {
      "questions": [
@@ -136,10 +139,8 @@ const generateTestQuestionsFlow = ai.defineFlow(
     outputSchema: GenerateTestQuestionsOutputSchema,
   },
   async input => {
-    // Validate that if multiple choice, number of correct answers <= number of options.
-    // This validation should ideally happen in the Zod schema if possible, or the model should be prompted carefully.
-    // For now, rely on model prompt.
     const {output} = await prompt(input);
     return output!;
   }
 );
+
