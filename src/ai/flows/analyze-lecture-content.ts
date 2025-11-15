@@ -45,6 +45,9 @@ const prompt = ai.definePrompt({
 Analyze the following lecture contents. Identify the key concepts and themes that span across all materials, and provide a single, coherent summary that integrates information from all provided content.
 **Important**: Ensure that all outputs (key concepts, themes, and summary) are in the same language as the predominant language of the input content(s). If multiple languages are present, use the language of the first content item.
 
+**ЕСЛИ КОНТЕНТ НА РУССКОМ ЯЗЫКЕ, ВСЕ ПОЛЯ В ВЫХОДНОМ JSON ДОЛЖНЫ БЫТЬ СТРОГО НА РУССКОМ ЯЗЫКЕ. (Ключевые понятия, Темы, Резюме).**
+**IF THE CONTENT IS IN RUSSIAN, ALL FIELDS IN THE OUTPUT JSON MUST BE STRICTLY IN RUSSIAN.**
+
 {{#each contents}}
 --- START FILE: {{this.fileName}} (Type: {{this.contentType}}) ---
 {{#ifEquals this.contentType "text"}}

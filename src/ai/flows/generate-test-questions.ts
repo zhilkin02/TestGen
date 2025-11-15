@@ -79,6 +79,9 @@ Based on the following lecture content, generate {{numberOfQuestions}} test ques
 The questions should be of type: {{questionType}}.
 **Important**: Ensure that the questions, options, and answers are generated in the same language as the provided 'Lecture Content'.
 
+**ЕСЛИ КОНТЕНТ НА РУССКОМ ЯЗЫКЕ, ВЕСЬ ВЫВОД (вопросы, варианты, ответы) В JSON ДОЛЖЕН БЫТЬ СТРОГО НА РУССКОМ ЯЗЫКЕ.**
+**IF THE CONTENT IS IN RUSSIAN, ALL OUTPUT (questions, options, answers) IN THE JSON MUST BE STRICTLY IN RUSSIAN.**
+
 Lecture Content:
 {{{lectureContent}}}
 
@@ -143,4 +146,3 @@ const generateTestQuestionsFlow = ai.defineFlow(
     return output!;
   }
 );
-
