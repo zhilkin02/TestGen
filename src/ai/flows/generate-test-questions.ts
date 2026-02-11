@@ -1,38 +1,26 @@
-
-// use server'
 'use server';
 
 /**
- * @fileOverview Generates test questions based on analyzed lecture content and desired question type.
- *
- * - generateTestQuestions - A function that generates test questions.
- * - GenerateTestQuestionsInput - The input type for the generateTestQuestions function.
- * - GenerateTestQuestionsOutput - The return type for the generateTestQuestions function.
+ * @fileOverview Generates test questions based on analyzed lecture content.
+ * Supports preferred Gemini model with automatic fallback (flash-lite → flash → pro).
  */
 
-import {ai} from '@/ai/genkit';
-import {z} from 'genkit';
-import type { QuestionType } from '@/types'; // Import QuestionType
+import { getAiForModel } from '@/ai/genkit';
+import { z } from 'genkit';
+import type { QuestionType, GeminiModelId } from '@/types';
+import { GEMINI_FALLBACK_ORDER } from '@/types';
 
 const QuestionTypeEnumSchema = z.enum(['fill-in-the-blank', 'single-choice', 'multiple-choice']);
 
 const GenerateTestQuestionsInputSchema = z.object({
-  lectureContent: z
-    .string()
-    .describe('The content of the lecture to generate test questions from.'),
-  numberOfQuestions: z
-    .number()
-    .default(5)
-    .describe('The number of test questions to generate.'),
-  questionDifficulty: z
-    .enum(['easy', 'medium', 'hard'])
-    .default('medium')
-    .describe('The difficulty level of the test questions.'),
+  lectureContent: z.string().describe('The content of the lecture to generate test questions from.'),
+  numberOfQuestions: z.number().default(5).describe('The number of test questions to generate.'),
+  questionDifficulty: z.enum(['easy', 'medium', 'hard']).default('medium').describe('The difficulty level of the test questions.'),
   questionType: QuestionTypeEnumSchema.describe('The desired type of questions to generate.'),
+  preferredModel: z.enum(['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro']).optional().describe('Preferred Gemini model; on failure the next in fallback order is tried.'),
 });
 export type GenerateTestQuestionsInput = z.infer<typeof GenerateTestQuestionsInputSchema>;
 
-// Schemas for different question types
 const BaseQuestionOutputSchema = z.object({
   questionText: z.string().describe("The main text of the question. For fill-in-the-blank, use '___' as a placeholder for the blank space."),
 });
@@ -65,16 +53,36 @@ const GenerateTestQuestionsOutputSchema = z.object({
 });
 export type GenerateTestQuestionsOutput = z.infer<typeof GenerateTestQuestionsOutputSchema>;
 
+export type GenerateTestQuestionsResult = GenerateTestQuestionsOutput & {
+  usedModel: GeminiModelId;
+  fallbackUsed: boolean;
+};
 
-export async function generateTestQuestions(input: GenerateTestQuestionsInput): Promise<GenerateTestQuestionsOutput> {
-  return generateTestQuestionsFlow(input);
+function isRetryableError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return (
+    msg.includes('429') ||
+    msg.includes('Too Many Requests') ||
+    msg.includes('quota') ||
+    msg.includes('503') ||
+    msg.includes('500') ||
+    msg.includes('ECONNRESET') ||
+    msg.includes('ETIMEDOUT')
+  );
 }
 
-const prompt = ai.definePrompt({
-  name: 'generateTestQuestionsPrompt',
-  input: {schema: GenerateTestQuestionsInputSchema},
-  output: {schema: GenerateTestQuestionsOutputSchema},
-  prompt: `You are an expert educator creating practice test questions for students.
+function getModelsToTry(preferred?: GeminiModelId): GeminiModelId[] {
+  if (!preferred) return [...GEMINI_FALLBACK_ORDER];
+  const rest = GEMINI_FALLBACK_ORDER.filter((m) => m !== preferred);
+  return [preferred, ...rest];
+}
+
+function createGenerateQuestionsPrompt(aiInstance: ReturnType<typeof getAiForModel>) {
+  return aiInstance.definePrompt({
+    name: 'generateTestQuestionsPrompt',
+    input: { schema: GenerateTestQuestionsInputSchema },
+    output: { schema: GenerateTestQuestionsOutputSchema },
+    prompt: `You are an expert educator creating practice test questions for students.
 Based on the following lecture content, generate {{numberOfQuestions}} test questions of {{questionDifficulty}} difficulty.
 The questions should be of type: {{questionType}}.
 **Important**: Ensure that the questions, options, and answers are generated in the same language as the provided 'Lecture Content'.
@@ -133,16 +141,29 @@ Here are examples for each question type:
      ]
    }
   `,
-});
+  });
+}
 
-const generateTestQuestionsFlow = ai.defineFlow(
-  {
-    name: 'generateTestQuestionsFlow',
-    inputSchema: GenerateTestQuestionsInputSchema,
-    outputSchema: GenerateTestQuestionsOutputSchema,
-  },
-  async input => {
-    const {output} = await prompt(input);
-    return output!;
+export async function generateTestQuestions(input: GenerateTestQuestionsInput): Promise<GenerateTestQuestionsResult> {
+  const preferredModel = input.preferredModel ?? 'gemini-2.5-flash-lite';
+  const modelsToTry = getModelsToTry(preferredModel);
+  let lastError: unknown;
+
+  for (const modelId of modelsToTry) {
+    try {
+      const aiInstance = getAiForModel(modelId);
+      const prompt = createGenerateQuestionsPrompt(aiInstance);
+      const { output } = await prompt(input);
+      return {
+        ...output!,
+        usedModel: modelId,
+        fallbackUsed: modelId !== preferredModel,
+      };
+    } catch (e) {
+      lastError = e;
+      if (!isRetryableError(e)) throw e;
+    }
   }
-);
+
+  throw lastError;
+}

@@ -1,12 +1,21 @@
 'use server';
 
-import { analyzeLectureContent, type AnalyzeLectureContentInput, type AnalyzeLectureContentOutput } from '@/ai/flows/analyze-lecture-content';
-import { generateTestQuestions, type GenerateTestQuestionsInput, type GenerateTestQuestionsOutput } from '@/ai/flows/generate-test-questions';
+import {
+  analyzeLectureContent,
+  type AnalyzeLectureContentInput,
+  type AnalyzeLectureContentResult,
+} from '@/ai/flows/analyze-lecture-content';
+import {
+  generateTestQuestions,
+  type GenerateTestQuestionsInput,
+  type GenerateTestQuestionsResult,
+} from '@/ai/flows/generate-test-questions';
 
-export async function handleAnalyzeContent(input: AnalyzeLectureContentInput): Promise<AnalyzeLectureContentOutput | { error: string }> {
+export async function handleAnalyzeContent(
+  input: AnalyzeLectureContentInput
+): Promise<AnalyzeLectureContentResult | { error: string }> {
   try {
-    const result = await analyzeLectureContent(input);
-    return result;
+    return await analyzeLectureContent(input);
   } catch (e) {
     console.error("Error analyzing content:", e);
     const errorMessage = e instanceof Error ? e.message : "An unknown error occurred during analysis.";
@@ -14,10 +23,11 @@ export async function handleAnalyzeContent(input: AnalyzeLectureContentInput): P
   }
 }
 
-export async function handleGenerateQuestions(input: GenerateTestQuestionsInput): Promise<GenerateTestQuestionsOutput | { error: string }> {
+export async function handleGenerateQuestions(
+  input: GenerateTestQuestionsInput
+): Promise<GenerateTestQuestionsResult | { error: string }> {
   try {
-    const result = await generateTestQuestions(input);
-    return result;
+    return await generateTestQuestions(input);
   } catch (e) {
     console.error("Error generating questions:", e);
     const errorMessage = e instanceof Error ? e.message : "An unknown error occurred during question generation.";

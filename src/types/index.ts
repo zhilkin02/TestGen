@@ -85,3 +85,15 @@ export interface LectureContentItem {
   rawTextContent?: string;
   contentDataUri?: string;
 }
+
+// --- Gemini model choice (for UI and API) ---
+export type GeminiModelId = 'gemini-2.5-flash-lite' | 'gemini-2.5-flash' | 'gemini-2.5-pro';
+
+/** Порядок fallback: при ошибке пробуем следующую модель */
+export const GEMINI_FALLBACK_ORDER: GeminiModelId[] = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro'];
+
+export const GEMINI_MODEL_LABELS: Record<GeminiModelId, string> = {
+  'gemini-2.5-flash-lite': 'Flash-Lite (по умолчанию)',
+  'gemini-2.5-flash': 'Flash',
+  'gemini-2.5-pro': 'Pro',
+};
