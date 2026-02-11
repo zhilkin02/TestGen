@@ -23,13 +23,14 @@ export default function QuestionGenerationForm({
   onGenerationStartParams,
   isLoading = false,
 }: QuestionGenerationFormProps) {
-  const [numQuestions, setNumQuestions] = useState(5);
+  const [numQuestions, setNumQuestions] = useState('5');
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
   const [questionType, setQuestionType] = useState<QuestionType>('single-choice'); // Default type
   const { toast } = useToast();
 
   const handleSubmit = () => {
-    if (numQuestions <= 0 || numQuestions > 20) {
+    const num = parseInt(numQuestions, 10);
+    if (isNaN(num) || num <= 0 || num > 20) {
       toast({
         title: "Неверное количество",
         description: "Количество вопросов должно быть от 1 до 20.",
@@ -45,7 +46,7 @@ export default function QuestionGenerationForm({
       });
       return;
     }
-    onGenerationStartParams(numQuestions, difficulty, questionType);
+    onGenerationStartParams(num, difficulty, questionType);
   };
 
   return (
@@ -61,7 +62,7 @@ export default function QuestionGenerationForm({
             id="num-questions"
             type="number"
             value={numQuestions}
-            onChange={(e) => setNumQuestions(parseInt(e.target.value, 10))}
+            onChange={(e) => setNumQuestions(e.target.value)}
             min="1"
             max="20"
             className="text-base"
@@ -90,6 +91,7 @@ export default function QuestionGenerationForm({
               <SelectItem value="fill-in-the-blank">Заполнить пропуск</SelectItem>
               <SelectItem value="single-choice">Одиночный выбор</SelectItem>
               <SelectItem value="multiple-choice">Множественный выбор</SelectItem>
+              <SelectItem value="matching">Сопоставление</SelectItem>
             </SelectContent>
           </Select>
         </div>

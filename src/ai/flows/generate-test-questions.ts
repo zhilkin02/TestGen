@@ -10,7 +10,7 @@ import { z } from 'genkit';
 import type { QuestionType, GeminiModelId } from '@/types';
 import { GEMINI_FALLBACK_ORDER } from '@/types';
 
-const QuestionTypeEnumSchema = z.enum(['fill-in-the-blank', 'single-choice', 'multiple-choice']);
+const QuestionTypeEnumSchema = z.enum(['fill-in-the-blank', 'single-choice', 'multiple-choice', 'matching']);
 
 const GenerateTestQuestionsInputSchema = z.object({
   lectureContent: z.string().describe('The content of the lecture to generate test questions from.'),
@@ -39,13 +39,26 @@ const SingleChoiceOutputSchema = BaseQuestionOutputSchema.extend({
 const MultipleChoiceOutputSchema = BaseQuestionOutputSchema.extend({
   type: z.enum(['multiple-choice']).describe("The type of the question."),
   options: z.array(z.string()).min(3).max(5).describe("An array of 3 to 5 unique answer options."),
-  correctAnswers: z.array(z.string()).min(1).describe("An array of one or more correct answers, each must exactly match one of the provided options."),
+  correctAnswers: z.array(z.string()).min(2).describe("An array of AT LEAST TWO correct answers, each must exactly match one of the provided options."),
+});
+
+const MatchingPairSchema = z.object({
+    prompt: z.string().describe("An item from the 'prompts' array."),
+    option: z.string().describe("The matching item from the 'options' array.")
+});
+
+const MatchingOutputSchema = BaseQuestionOutputSchema.extend({
+  type: z.enum(['matching']).describe("The type of the question."),
+  prompts: z.array(z.string()).min(2).max(8).describe("An array of 2 to 8 items to be matched."),
+  options: z.array(z.string()).min(2).max(8).describe("An array of 2 to 8 unique options to match from."),
+  correctMatches: z.array(MatchingPairSchema).describe("An array of objects, where each object represents a correct pair of a prompt and an option."),
 });
 
 const GeneratedQuestionSchema = z.discriminatedUnion("type", [
   FillInTheBlankOutputSchema,
   SingleChoiceOutputSchema,
   MultipleChoiceOutputSchema,
+  MatchingOutputSchema,
 ]);
 
 const GenerateTestQuestionsOutputSchema = z.object({
@@ -57,6 +70,29 @@ export type GenerateTestQuestionsResult = GenerateTestQuestionsOutput & {
   usedModel: GeminiModelId;
   fallbackUsed: boolean;
 };
+
+function getOutputSchemaForType(questionType: QuestionType) {
+    let questionSchema;
+    switch (questionType) {
+        case 'fill-in-the-blank':
+            questionSchema = FillInTheBlankOutputSchema;
+            break;
+        case 'single-choice':
+            questionSchema = SingleChoiceOutputSchema;
+            break;
+        case 'multiple-choice':
+            questionSchema = MultipleChoiceOutputSchema;
+            break;
+        case 'matching':
+            questionSchema = MatchingOutputSchema;
+            break;
+        default:
+            throw new Error(`Unsupported question type: ${questionType}`);
+    }
+    return z.object({
+        questions: z.array(questionSchema).describe('An array of generated test questions.'),
+    });
+}
 
 function isRetryableError(e: unknown): boolean {
   const msg = e instanceof Error ? e.message : String(e);
@@ -77,11 +113,13 @@ function getModelsToTry(preferred?: GeminiModelId): GeminiModelId[] {
   return [preferred, ...rest];
 }
 
-function createGenerateQuestionsPrompt(aiInstance: ReturnType<typeof getAiForModel>) {
+function createGenerateQuestionsPrompt(aiInstance: ReturnType<typeof getAiForModel>, questionType: QuestionType) {
+  const outputSchema = getOutputSchemaForType(questionType);
+  
   return aiInstance.definePrompt({
-    name: 'generateTestQuestionsPrompt',
+    name: `generateTestQuestionsPrompt_${questionType}`,
     input: { schema: GenerateTestQuestionsInputSchema },
-    output: { schema: GenerateTestQuestionsOutputSchema },
+    output: { schema: outputSchema },
     prompt: `You are an expert educator creating practice test questions for students.
 Based on the following lecture content, generate {{numberOfQuestions}} test questions of {{questionDifficulty}} difficulty.
 The questions should be of type: {{questionType}}.
@@ -127,7 +165,8 @@ Here are examples for each question type:
    }
 
 3. If questionType is 'multiple-choice':
-   Provide 3 to 5 unique options. "correctAnswers" must be an array containing one or more of these options.
+   Provide 3 to 5 unique options. 
+   "correctAnswers" must be an array containing **AT LEAST TWO** correct options.
    The "type" field must be "multiple-choice".
    Example:
    {
@@ -140,6 +179,28 @@ Here are examples for each question type:
        }
      ]
    }
+
+4. If questionType is 'matching':
+   Provide 2 to 8 unique prompts and 2 to 8 unique options.
+   The "correctMatches" should be an array of objects, each with a "prompt" and its corresponding "option".
+   The "type" field must be "matching".
+   Example:
+   {
+     "questions": [
+       {
+         "type": "matching",
+         "questionText": "Сопоставьте страны с их столицами.",
+         "prompts": ["Франция", "Германия", "Испания"],
+         "options": ["Берлин", "Мадрид", "Париж"],
+         "correctMatches": [
+           { "prompt": "Франция", "option": "Париж" },
+           { "prompt": "Германия", "option": "Берлин" },
+           { "prompt": "Испания", "option": "Мадрид" }
+         ]
+       }
+     ]
+   }
+
   `,
   });
 }
@@ -152,7 +213,7 @@ export async function generateTestQuestions(input: GenerateTestQuestionsInput): 
   for (const modelId of modelsToTry) {
     try {
       const aiInstance = getAiForModel(modelId);
-      const prompt = createGenerateQuestionsPrompt(aiInstance);
+      const prompt = createGenerateQuestionsPrompt(aiInstance, input.questionType);
       const { output } = await prompt(input);
       return {
         ...output!,
@@ -161,7 +222,11 @@ export async function generateTestQuestions(input: GenerateTestQuestionsInput): 
       };
     } catch (e) {
       lastError = e;
-      if (!isRetryableError(e)) throw e;
+      if (!isRetryableError(e)) {
+         console.error(`Non-retryable error generating questions of type '${input.questionType}' with model '${modelId}':`, e);
+         throw e;
+      }
+       console.warn(`Retryable error with model ${modelId}. Trying next model. Error:`, e);
     }
   }
 

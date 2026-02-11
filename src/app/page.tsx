@@ -16,6 +16,7 @@ import type {
   EditableFillInTheBlankQuestion,
   EditableSingleChoiceQuestion,
   EditableMultipleChoiceQuestion,
+  EditableMatchingQuestion,
   LectureContentItem,
   GeminiModelId,
 } from '@/types';
@@ -65,13 +66,10 @@ export default function Home() {
   
   const handleFileProcessingFailureInBatch = useCallback((fileName: string, error: string) => {
     setLocalBatchProcessingErrors(prev => [...prev, {fileName, error}]);
-    // Errors for individual files are collected here.
-    // The main analysis will proceed with successfully processed files from the batch.
   }, []);
 
-  // This is called ONCE after ALL selected files are locally processed by FileUploadForm
   const handleBatchProcessed = useCallback(async (infos: UploadedFileInfo[]) => {
-    setProcessedFilesBatch(infos); // Store all infos, including those with local errors for display
+    setProcessedFilesBatch(infos);
     
     const filesForAnalysis: LectureContentItem[] = [];
     let filesHadLocalErrors = false;
@@ -79,36 +77,22 @@ export default function Home() {
     infos.forEach(info => {
       if (info.error) {
         filesHadLocalErrors = true;
-        // Error already handled by onFileProcessingFailure and toast in FileUploadForm
         return; 
       }
       if (info.textContent) {
-        filesForAnalysis.push({
-          fileName: info.fileName,
-          contentType: 'text',
-          rawTextContent: info.textContent,
-        });
+        filesForAnalysis.push({ fileName: info.fileName, contentType: 'text', rawTextContent: info.textContent });
       } else if (info.dataUri && info.fileType.startsWith('image/')) {
-        filesForAnalysis.push({
-          fileName: info.fileName,
-          contentType: 'image',
-          contentDataUri: info.dataUri,
-        });
+        filesForAnalysis.push({ fileName: info.fileName, contentType: 'image', contentDataUri: info.dataUri });
       } else if (info.dataUri && info.fileType === 'application/pdf') {
-         filesForAnalysis.push({
-          fileName: info.fileName,
-          contentType: 'pdf',
-          contentDataUri: info.dataUri,
-        });
+         filesForAnalysis.push({ fileName: info.fileName, contentType: 'pdf', contentDataUri: info.dataUri });
       }
-      // .doc files or other unsupported are already marked with an error by FileUploadForm
     });
 
     if (filesForAnalysis.length === 0) {
       const errorMsg = "Нет файлов, подходящих для AI-анализа в загруженной пачке.";
       setAnalysisError(errorMsg);
-      setIsAnalyzing(false); // Ensure loading state is off
-      if (!filesHadLocalErrors) { // Only toast if no specific file errors were already shown
+      setIsAnalyzing(false);
+      if (!filesHadLocalErrors) {
           toast({ title: "Анализ невозможен", description: errorMsg, variant: "warning" });
       }
       return;
@@ -158,19 +142,15 @@ export default function Home() {
 
   const handleBatchProcessingClientComplete = useCallback(() => {
     setIsBatchProcessingClient(false);
-    // At this point, if processedFilesBatch is null and no local errors, it means no files were selected or all were invalid before handleSubmit.
-    // If processedFilesBatch has items, analysis will be triggered by handleBatchProcessed.
   }, []);
 
 
   const onQuestionGenerationStartCallback = useCallback(async (numQuestions: number, difficulty: 'easy' | 'medium' | 'hard', questionType: QuestionType) => {
     if (!analysisResult || !analysisResult.summary) {
-      setQuestionGenerationError("Нет данных анализа для генерации вопросов.");
       toast({ title: "Ошибка", description: "Нет данных анализа для генерации вопросов.", variant: "destructive"});
       return;
     }
     if (!processedFilesBatch || processedFilesBatch.length === 0) {
-       setQuestionGenerationError("Нет информации о файлах для контекста генерации.");
       toast({ title: "Ошибка", description: "Нет информации о файлах для контекста генерации.", variant: "destructive"});
       return;
     }
@@ -200,49 +180,38 @@ export default function Home() {
           setSelectedModel(usedModel);
           const prevLabel = modelLabelShort(selectedModel);
           const newLabel = modelLabelShort(usedModel);
-          toast({
-            title: "Вопросы сгенерированы",
-            description: `Модель «${prevLabel}» не отвечает — использована «${newLabel}». Вопросы для ${firstFileName} созданы.`,
-            variant: "warning",
-          });
+          toast({ title: "Вопросы сгенерированы", description: `Модель «${prevLabel}» не отвечает — использована «${newLabel}».`, variant: "warning" });
         } else {
           toast({ title: `Вопросы сгенерированы для: ${firstFileName}`, description: "Тестовые вопросы успешно созданы." });
         }
+        
         const newEditableQuestions = result.questions.map((q: GeneratedQuestion) => {
-          const baseEditable = {
-            id: uuidv4(),
-            selected: true,
-            editedQuestionText: q.questionText,
-          };
+          const baseEditable = { id: uuidv4(), selected: true, editedQuestionText: q.questionText };
           switch (q.type) {
             case 'fill-in-the-blank':
-              return {
-                ...baseEditable,
-                type: q.type,
-                originalQuestion: q,
-                editedCorrectAnswer: q.correctAnswer,
-              } as EditableFillInTheBlankQuestion;
+              return { ...baseEditable, type: q.type, originalQuestion: q, editedCorrectAnswer: q.correctAnswer } as EditableFillInTheBlankQuestion;
             case 'single-choice':
-              return {
-                ...baseEditable,
-                type: q.type,
-                originalQuestion: q,
-                editedOptions: q.options.map(opt => ({ id: uuidv4(), text: opt })),
-                editedCorrectAnswer: q.correctAnswer,
-              } as EditableSingleChoiceQuestion;
+              return { ...baseEditable, type: q.type, originalQuestion: q, editedOptions: q.options.map(opt => ({ id: uuidv4(), text: opt })), editedCorrectAnswer: q.correctAnswer } as EditableSingleChoiceQuestion;
             case 'multiple-choice':
+              return { ...baseEditable, type: q.type, originalQuestion: q, editedOptions: q.options.map(opt => ({ id: uuidv4(), text: opt })), editedCorrectAnswers: q.correctAnswers } as EditableMultipleChoiceQuestion;
+            case 'matching':
+              const correctMatchesRecord: Record<string, string> = q.correctMatches.reduce((acc, match) => {
+                acc[match.prompt] = match.option;
+                return acc;
+              }, {} as Record<string, string>);
               return {
                 ...baseEditable,
                 type: q.type,
                 originalQuestion: q,
-                editedOptions: q.options.map(opt => ({ id: uuidv4(), text: opt })),
-                editedCorrectAnswers: q.correctAnswers,
-              } as EditableMultipleChoiceQuestion;
+                editedPrompts: q.prompts.map(p => ({ id: uuidv4(), text: p })),
+                editedOptions: q.options.map(o => ({ id: uuidv4(), text: o })),
+                editedCorrectMatches: correctMatchesRecord,
+              } as EditableMatchingQuestion;
             default:
               console.error("Unknown question type from AI:", q);
               return null; 
           }
-        }).filter(q => q !== null) as EditableQuestionItem[];
+        }).filter((q): q is EditableQuestionItem => q !== null);
         
         setEditableQuestions(newEditableQuestions);
         setQuestionGenerationError(null);
@@ -279,24 +248,14 @@ export default function Home() {
           <div className="space-y-8">
             <Card className="shadow-lg rounded-xl">
               <CardHeader className="pb-2">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Cpu className="h-5 w-5" />
-                  Модель Gemini
-                </CardTitle>
-                <CardDescription>Выберите модель для анализа и генерации вопросов. При недоступности выбранной модели будет использована следующая в списке.</CardDescription>
+                <CardTitle className="text-lg flex items-center gap-2"><Cpu className="h-5 w-5" />Модель Gemini</CardTitle>
+                <CardDescription>Выберите модель для анализа и генерации. При недоступности будет использована следующая.</CardDescription>
               </CardHeader>
               <CardContent>
-                <RadioGroup
-                  value={selectedModel}
-                  onValueChange={(v) => setSelectedModel(v as GeminiModelId)}
-                  className="grid grid-cols-1 sm:grid-cols-3 gap-3"
-                >
+                <RadioGroup value={selectedModel} onValueChange={(v) => setSelectedModel(v as GeminiModelId)} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {GEMINI_FALLBACK_ORDER.map((id) => (
                     <div key={id} className="flex items-center space-x-2">
-                      <RadioGroupItem value={id} id={`model-${id}`} />
-                      <Label htmlFor={`model-${id}`} className="cursor-pointer text-sm font-normal">
-                        {GEMINI_MODEL_LABELS[id]}
-                      </Label>
+                      <RadioGroupItem value={id} id={`model-${id}`} /><Label htmlFor={`model-${id}`} className="cursor-pointer text-sm font-normal">{GEMINI_MODEL_LABELS[id]}</Label>
                     </div>
                   ))}
                 </RadioGroup>
@@ -308,94 +267,51 @@ export default function Home() {
               onFileProcessingFailure={handleFileProcessingFailureInBatch}
               onBatchProcessingComplete={handleBatchProcessingClientComplete}
             />
-            {isBatchProcessingClient && ( // Local file reading/parsing
-               <div className="p-6 border rounded-xl bg-card shadow-lg">
-                <p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет локальная обработка файлов...</p>
-              </div>
+            {isBatchProcessingClient && (
+               <div className="p-6 border rounded-xl bg-card shadow-lg"><p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет локальная обработка файлов...</p></div>
             )}
             {localBatchProcessingErrors.length > 0 && !isBatchProcessingClient && (
               <Alert variant="destructive" className="shadow-md rounded-xl">
-                <Terminal className="h-4 w-4" />
-                <AlertTitle>Ошибки при локальной обработке некоторых файлов!</AlertTitle>
+                <Terminal className="h-4 w-4" /><AlertTitle>Ошибки при локальной обработке!</AlertTitle>
                 <AlertDescription>
-                  <ul className="list-disc pl-5 space-y-1">
-                    {localBatchProcessingErrors.map((err, index) => (
-                      <li key={index}><strong>{err.fileName}:</strong> {err.error}</li>
-                    ))}
-                  </ul>
-                   <p className="mt-2">AI-анализ будет выполнен только для успешно обработанных файлов (если такие есть).</p>
+                  <ul className="list-disc pl-5 space-y-1">{localBatchProcessingErrors.map((err, index) => (<li key={index}><strong>{err.fileName}:</strong> {err.error}</li>))}</ul>
+                   <p className="mt-2">AI-анализ будет выполнен только для успешно обработанных файлов.</p>
                 </AlertDescription>
               </Alert>
             )}
-
-            {isAnalyzing && ( // AI analysis in progress
-              <div className="p-6 border rounded-xl bg-card shadow-lg mt-4">
-                 <p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет AI-анализ {processedFilesBatch ? `${getNumSuccessfullyProcessedFiles()} файла(ов)` : ''}... </p>
-              </div>
+            {isAnalyzing && (
+              <div className="p-6 border rounded-xl bg-card shadow-lg mt-4"><p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет AI-анализ {processedFilesBatch ? `${getNumSuccessfullyProcessedFiles()} файла(ов)` : ''}... </p></div>
             )}
             {analysisError && !isAnalyzing && ( 
-              <Alert variant="destructive" className="shadow-md rounded-xl mt-4">
-                <Terminal className="h-4 w-4" />
-                <AlertTitle>Ошибка AI-анализа!</AlertTitle>
-                <AlertDescription>{analysisError}</AlertDescription>
-              </Alert>
+              <Alert variant="destructive" className="shadow-md rounded-xl mt-4"><Terminal className="h-4 w-4" /><AlertTitle>Ошибка AI-анализа!</AlertTitle><AlertDescription>{analysisError}</AlertDescription></Alert>
             )}
             {analysisResult && !isAnalyzing && !analysisError && (
               <>
                 <AnalysisResults results={analysisResult} />
-                 <QuestionGenerationForm
-                  analysisSummary={analysisResult.summary}
-                  onGenerationStartParams={onQuestionGenerationStartCallback}
-                  isLoading={isGeneratingQuestions}
-                />
+                 <QuestionGenerationForm analysisSummary={analysisResult.summary} onGenerationStartParams={onQuestionGenerationStartCallback} isLoading={isGeneratingQuestions} />
               </>
             )}
              {!isBatchProcessingClient && !processedFilesBatch && localBatchProcessingErrors.length === 0 && !analysisResult && !isAnalyzing && !analysisError && (
-                 <div className="p-6 border rounded-xl bg-card shadow-lg text-center mt-8">
-                    <Info className="h-6 w-6 mx-auto mb-2 text-muted-foreground"/>
-                    <p className="text-muted-foreground">Загрузите файлы, чтобы начать.</p>
-                </div>
+                 <div className="p-6 border rounded-xl bg-card shadow-lg text-center mt-8"><Info className="h-6 w-6 mx-auto mb-2 text-muted-foreground"/><p className="text-muted-foreground">Загрузите файлы, чтобы начать.</p></div>
             )}
-             {/* Message if all files had local errors and no analysis was attempted */}
              {!isBatchProcessingClient && processedFilesBatch && processedFilesBatch.length > 0 && getNumSuccessfullyProcessedFiles() === 0 && !isAnalyzing && !analysisResult && (
-                <Alert variant="warning" className="shadow-md rounded-xl mt-4">
-                    <Terminal className="h-4 w-4"/>
-                    <AlertTitle>AI-анализ не выполнен</AlertTitle>
-                    <AlertDescription>Все загруженные файлы имели ошибки при локальной обработке или не подходят для анализа.</AlertDescription>
-                </Alert>
+                <Alert variant="warning" className="shadow-md rounded-xl mt-4"><Terminal className="h-4 w-4"/><AlertTitle>AI-анализ не выполнен</AlertTitle><AlertDescription>Все загруженные файлы имели ошибки или не подходят для анализа.</AlertDescription></Alert>
              )}
           </div>
           
           <div className="md:sticky md:top-8 space-y-8">
-            {processedFilesBatch && processedFilesBatch.length > 0 && !isBatchProcessingClient && (
-              <FileInfoDisplay filesInfo={processedFilesBatch} />
-            )}
-            
+            {processedFilesBatch && processedFilesBatch.length > 0 && !isBatchProcessingClient && (<FileInfoDisplay filesInfo={processedFilesBatch} />)}
             {isGeneratingQuestions && (
-              <div className="p-6 border rounded-xl bg-card shadow-lg">
-                <p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет генерация вопросов для {getNumSuccessfullyProcessedFiles()} файла(ов)... </p>
-              </div>
+              <div className="p-6 border rounded-xl bg-card shadow-lg"><p className="text-center text-primary animate-pulse flex items-center justify-center"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" /> Идет генерация вопросов...</p></div>
             )}
             {questionGenerationError && !isGeneratingQuestions && ( 
-              <Alert variant="destructive" className="shadow-md rounded-xl">
-                <Terminal className="h-4 w-4" />
-                <AlertTitle>Ошибка генерации вопросов!</AlertTitle>
-                <AlertDescription>{questionGenerationError}</AlertDescription>
-              </Alert>
+              <Alert variant="destructive" className="shadow-md rounded-xl"><Terminal className="h-4 w-4" /><AlertTitle>Ошибка генерации вопросов!</AlertTitle><AlertDescription>{questionGenerationError}</AlertDescription></Alert>
             )}
             {(editableQuestions.length > 0 || isGeneratingQuestions) && !questionGenerationError && (
-              <QuestionEditor 
-                questions={editableQuestions} 
-                isLoading={isGeneratingQuestions}
-                onQuestionUpdate={handleUpdateEditableQuestion}
-                onQuestionDelete={handleDeleteEditableQuestion}
-              />
+              <QuestionEditor questions={editableQuestions} isLoading={isGeneratingQuestions} onQuestionUpdate={handleUpdateEditableQuestion} onQuestionDelete={handleDeleteEditableQuestion} />
             )}
             {analysisResult && !isAnalyzing && !analysisError && editableQuestions.length === 0 && !isGeneratingQuestions && !questionGenerationError && (
-              <div className="p-6 border rounded-xl bg-card shadow-lg text-center">
-                  <Files className="h-6 w-6 mx-auto mb-2 text-muted-foreground"/>
-                  <p className="text-muted-foreground">Сгенерируйте вопросы на основе объединенного анализа {getNumSuccessfullyProcessedFiles()} файла(ов).</p>
-              </div>
+              <div className="p-6 border rounded-xl bg-card shadow-lg text-center"><Files className="h-6 w-6 mx-auto mb-2 text-muted-foreground"/><p className="text-muted-foreground">Сгенерируйте вопросы на основе анализа.</p></div>
             )}
           </div>
         </div>
@@ -405,30 +321,4 @@ export default function Home() {
       </footer>
     </div>
   );
-}
-
-// Update prop type for QuestionGenerationForm
-declare module '@/components/app/QuestionGenerationForm' {
-  interface QuestionGenerationFormProps {
-    analysisSummary: string;
-    onGenerationStartParams: (numQuestions: number, difficulty: 'easy' | 'medium' | 'hard', questionType: QuestionType) => void;
-    isLoading?: boolean;
-  }
-}
-
-// Update prop types for QuestionEditor
-declare module '@/components/app/QuestionEditor' {
-  interface QuestionEditorProps {
-    questions: EditableQuestionItem[];
-    isLoading?: boolean;
-    onQuestionUpdate: (updatedQuestion: EditableQuestionItem) => void;
-    onQuestionDelete: (questionId: string) => void;
-  }
-}
-
-// Update prop types for FileInfoDisplay
-declare module '@/components/app/FileInfoDisplay' {
-  interface FileInfoDisplayProps {
-    filesInfo: UploadedFileInfo[] | null;
-  }
 }

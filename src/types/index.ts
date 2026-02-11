@@ -15,7 +15,7 @@ export interface LectureAnalysisResult {
 }
 
 // --- Question Types ---
-export type QuestionType = 'fill-in-the-blank' | 'single-choice' | 'multiple-choice';
+export type QuestionType = 'fill-in-the-blank' | 'single-choice' | 'multiple-choice' | 'matching';
 
 export interface BaseQuestion {
   questionText: string;
@@ -38,7 +38,20 @@ export interface MultipleChoiceQuestion extends BaseQuestion {
   correctAnswers: string[]; 
 }
 
-export type GeneratedQuestion = FillInTheBlankQuestion | SingleChoiceQuestion | MultipleChoiceQuestion;
+export interface MatchingPair {
+  prompt: string;
+  option: string;
+}
+
+export interface MatchingQuestion extends BaseQuestion {
+  type: 'matching';
+  prompts: string[];
+  options: string[];
+  correctMatches: MatchingPair[]; 
+}
+
+
+export type GeneratedQuestion = FillInTheBlankQuestion | SingleChoiceQuestion | MultipleChoiceQuestion | MatchingQuestion;
 
 
 // --- Editable Question Item (Discriminated Union) ---
@@ -73,10 +86,19 @@ export interface EditableMultipleChoiceQuestion extends EditableBaseQuestion {
   editedCorrectAnswers: string[];
 }
 
+export interface EditableMatchingQuestion extends EditableBaseQuestion {
+    type: 'matching';
+    originalQuestion: MatchingQuestion;
+    editedPrompts: EditableOption[];
+    editedOptions: EditableOption[];
+    editedCorrectMatches: Record<string, string>; // Maps prompt text to option text
+}
+
 export type EditableQuestionItem = 
   | EditableFillInTheBlankQuestion 
   | EditableSingleChoiceQuestion 
-  | EditableMultipleChoiceQuestion;
+  | EditableMultipleChoiceQuestion
+  | EditableMatchingQuestion;
 
 // Defines the structure for a single content item to be analyzed by AI
 export interface LectureContentItem {
